@@ -3,6 +3,9 @@ use serde_json::Value;
 use std::env;
 use std::error::Error;
 use std::io::{self, BufRead, Write};
+use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
+use serde::Serialize;
+use serde_json::json;
 
 #[derive(Deserialize, Debug)]
 struct PullRequest {
@@ -27,6 +30,19 @@ struct Comment {
     user: User,
     created_at: String,
     body: String,
+}
+
+#[derive(Serialize, Debug)]
+struct ClaudeMessage {
+    role: String,
+    content: String,
+}
+
+#[derive(Serialize, Debug)]
+struct ClaudeRequest {
+    model: String,
+    messages: Vec<ClaudeMessage>,
+    max_tokens: u32,
 }
 
 fn get_comments_count(comments_url: &str) -> Result<usize, Box<dyn Error>> {
@@ -68,11 +84,65 @@ struct FileChange {
     patch: Option<String>,
 }
 
-/// Analyzes a patch and returns insights about the changes
-fn analyze_patch(patch: &str) -> (String, Vec<String>, Vec<String>) {
+async fn get_code_review(patch: &str) -> Result<String, Box<dyn Error>> {
+    let api_key = env::var("ANTHROPIC_API_KEY")
+        .expect("ANTHROPIC_API_KEY environment variable not set");
+
+    let prompt = format!(
+        "Please review this code patch and provide specific, actionable feedback about potential issues, \
+        improvements, and best practices. Consider performance, security, maintainability, and Rust idioms.\n\n\
+        ```\n{}\n```",
+        patch
+    );
+
+    let client = reqwest::Client::new();
+    let mut headers = HeaderMap::new();
+    headers.insert("x-api-key", HeaderValue::from_str(&api_key)?);
+    headers.insert(
+        CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    headers.insert(
+        "anthropic-version",
+        HeaderValue::from_static("2023-06-01"),
+    );
+
+    let messages = vec![ClaudeMessage {
+        role: "user".to_string(),
+        content: prompt,
+    }];
+
+    let request = ClaudeRequest {
+        model: "claude-3-5-sonnet-20241022".to_string(),
+        messages,
+        max_tokens: 1000,
+    };
+
+    let response = client
+        .post("https://api.anthropic.com/v1/messages")
+        .headers(headers)
+        .json(&request)
+        .send()
+        .await?
+        .json::<serde_json::Value>()
+        .await?;
+
+    println!("Request: {:?}", request);
+    println!("Response: {:?}", response);
+
+    let review = response["content"][0]["text"]
+        .as_str()
+        .ok_or("Failed to get response text")?
+        .to_string();
+
+    Ok(review)
+}
+
+async fn analyze_patch(patch: &str) -> (String, Vec<String>, Vec<String>, Option<String>) {
     let mut summary = String::new();
     let mut questions = Vec::new();
     let mut comments = Vec::new();
+    let mut claude_review = None;
 
     // Count additions and deletions
     let additions = patch.lines().filter(|l| l.starts_with('+')).count();
@@ -108,7 +178,13 @@ fn analyze_patch(patch: &str) -> (String, Vec<String>, Vec<String>) {
         );
     }
 
-    (summary, questions, comments)
+    // Add Claude's review if available
+    match get_code_review(patch).await {
+        Ok(review) => claude_review = Some(review),
+        Err(e) => println!("Error getting code review: {}", e),
+    }
+
+    (summary, questions, comments, claude_review)
 }
 
 fn get_pr_details(
@@ -146,7 +222,7 @@ fn get_pr_details(
     Ok(details)
 }
 
-fn display_pr_details(pr: &PullRequest, owner: &str, repo: &str) -> Result<(), Box<dyn Error>> {
+async fn display_pr_details(pr: &PullRequest, owner: &str, repo: &str) -> Result<(), Box<dyn Error>> {
     println!("\n{}", "=".repeat(80));
     println!("PR #{}: {}", pr.number, pr.title);
     println!("{}", "=".repeat(80));
@@ -191,7 +267,7 @@ fn display_pr_details(pr: &PullRequest, owner: &str, repo: &str) -> Result<(), B
                         println!("{}", "-".repeat(80));
 
                         // Analyze the patch
-                        let (summary, questions, comments) = analyze_patch(&patch);
+                        let (summary, questions, comments, claude_review) = analyze_patch(&patch).await;
 
                         println!("\nAnalysis:");
                         println!("Summary: {}", summary);
@@ -208,6 +284,13 @@ fn display_pr_details(pr: &PullRequest, owner: &str, repo: &str) -> Result<(), B
                             for c in comments {
                                 println!("- {}", c);
                             }
+                        }
+
+                        if let Some(review) = claude_review {
+                            println!("\nClaude's Review:");
+                            println!("{}", "-".repeat(80));
+                            println!("{}", review);
+                            println!("{}", "-".repeat(80));
                         }
 
                         println!();
@@ -255,7 +338,8 @@ fn find_pr_by_number(prs: &[PullRequest], number: u32) -> Option<&PullRequest> {
     prs.iter().find(|pr| pr.number == number)
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = env::args().collect();
 
     if args.len() < 3 {
@@ -282,7 +366,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .into_json::<PullRequest>()?;
                 
                 // Display PR details and comments
-                display_pr_details(&pr, owner, repo)?;
+                display_pr_details(&pr, owner, repo).await?;
                 display_pr_comments(number, owner, repo)?;
                 return Ok(());
             }
@@ -351,16 +435,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                 Ok(pr_number) => {
                     if let Some(pr) = find_pr_by_number(&response, pr_number) {
                         // Display PR details (title, description, modified files)
-                        match display_pr_details(pr, owner, repo) {
-                            Ok(_) => {}
-                            Err(e) => println!("Error displaying PR details: {}", e),
-                        }
+                        display_pr_details(pr, owner, repo).await?;
 
                         // Display PR comments
-                        match display_pr_comments(pr_number, owner, repo) {
-                            Ok(_) => {}
-                            Err(e) => println!("Error fetching comments: {}", e),
-                        }
+                        display_pr_comments(pr_number, owner, repo)?;
                     } else {
                         println!("PR #{} not found in the current list.", pr_number);
                     }
