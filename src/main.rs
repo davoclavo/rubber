@@ -8,10 +8,12 @@ use std::io::{self, BufRead, Write};
 struct PullRequest {
     number: u32,
     title: String,
+    body: Option<String>,
     user: User,
     created_at: String,
     html_url: String,
     comments_url: String,
+    url: String,
 }
 
 #[derive(Deserialize, Debug)]
@@ -47,6 +49,108 @@ fn get_pr_comments(comments_url: &str) -> Result<Vec<Comment>, Box<dyn Error>> {
     Ok(comments)
 }
 
+#[derive(Deserialize, Debug)]
+struct PullRequestDetail {
+    title: String,
+    body: Option<String>,
+    html_url: String,
+    #[serde(default)]
+    files: Vec<FileChange>,
+}
+
+#[derive(Deserialize, Debug)]
+struct FileChange {
+    filename: String,
+    status: String,
+    additions: u32,
+    deletions: u32,
+    changes: u32,
+}
+
+fn get_pr_details(
+    pr_number: u32,
+    owner: &str,
+    repo: &str,
+) -> Result<PullRequestDetail, Box<dyn Error>> {
+    // The correct endpoint for PR details
+    let pr_url = format!(
+        "https://api.github.com/repos/{}/{}/pulls/{}",
+        owner, repo, pr_number
+    );
+
+    // Fetch PR details
+    let pr_response = ureq::get(&pr_url)
+        .set("User-Agent", "rubber")
+        .call()?
+        .into_string()?;
+
+    let mut details: PullRequestDetail = serde_json::from_str(&pr_response)?;
+
+    // Fetch files separately using the files endpoint
+    let files_url = format!(
+        "https://api.github.com/repos/{}/{}/pulls/{}/files",
+        owner, repo, pr_number
+    );
+
+    let files_response = ureq::get(&files_url)
+        .set("User-Agent", "rubber")
+        .call()?
+        .into_string()?;
+
+    details.files = serde_json::from_str(&files_response)?;
+
+    Ok(details)
+}
+
+fn display_pr_details(pr: &PullRequest, owner: &str, repo: &str) -> Result<(), Box<dyn Error>> {
+    println!("\n{}", "=".repeat(80));
+    println!("PR #{}: {}", pr.number, pr.title);
+    println!("{}", "=".repeat(80));
+
+    println!("\nDescription:");
+    println!("{}", "-".repeat(80));
+    if let Some(body) = &pr.body {
+        if !body.trim().is_empty() {
+            println!("{}", body);
+        } else {
+            println!("No description provided.");
+        }
+    } else {
+        println!("No description provided.");
+    }
+    println!("{}", "-".repeat(80));
+
+    // Get the PR details including modified files
+    match get_pr_details(pr.number, owner, repo) {
+        Ok(details) => {
+            println!("\nModified Files:");
+            println!("{}", "-".repeat(80));
+
+            if details.files.is_empty() {
+                println!("No files modified in this PR.");
+            } else {
+                println!(
+                    "{:<50} {:<10} {:<10} {:<10}",
+                    "Filename", "Status", "Additions", "Deletions"
+                );
+                for file in details.files {
+                    println!(
+                        "{:<50} {:<10} {:<10} {:<10}",
+                        file.filename, file.status, file.additions, file.deletions
+                    );
+                }
+            }
+            println!("{}", "-".repeat(80));
+        }
+        Err(e) => {
+            println!("\nError fetching PR details: {}", e);
+            println!("Unable to display modified files.");
+        }
+    }
+
+    Ok(())
+}
+
 fn display_pr_comments(pr_number: u32, owner: &str, repo: &str) -> Result<(), Box<dyn Error>> {
     let comments_url = format!(
         "https://api.github.com/repos/{}/{}/issues/{}/comments",
@@ -71,6 +175,10 @@ fn display_pr_comments(pr_number: u32, owner: &str, repo: &str) -> Result<(), Bo
     }
 
     Ok(())
+}
+
+fn find_pr_by_number(prs: &[PullRequest], number: u32) -> Option<&PullRequest> {
+    prs.iter().find(|pr| pr.number == number)
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -105,12 +213,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         );
         println!("{}", "-".repeat(106));
 
-        for pr in response {
+        for pr in &response {
             // Truncate title if too long
             let title = if pr.title.len() > 47 {
                 format!("{}...", &pr.title[..44])
             } else {
-                pr.title
+                pr.title.clone()
             };
 
             // Fetch comment count for this PR
@@ -128,7 +236,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             println!("       URL: {}", pr.html_url);
         }
 
-        println!("\nEnter PR number to view comments (or 'q' to quit): ");
+        println!("\nEnter PR number to view details (or 'q' to quit): ");
         io::stdout().flush()?;
 
         let stdin = io::stdin();
@@ -138,10 +246,23 @@ fn main() -> Result<(), Box<dyn Error>> {
         let input = input.trim();
         if input.to_lowercase() != "q" {
             match input.parse::<u32>() {
-                Ok(pr_number) => match display_pr_comments(pr_number, owner, repo) {
-                    Ok(_) => {}
-                    Err(e) => println!("Error fetching comments: {}", e),
-                },
+                Ok(pr_number) => {
+                    if let Some(pr) = find_pr_by_number(&response, pr_number) {
+                        // Display PR details (title, description, modified files)
+                        match display_pr_details(pr, owner, repo) {
+                            Ok(_) => {}
+                            Err(e) => println!("Error displaying PR details: {}", e),
+                        }
+
+                        // Display PR comments
+                        match display_pr_comments(pr_number, owner, repo) {
+                            Ok(_) => {}
+                            Err(e) => println!("Error fetching comments: {}", e),
+                        }
+                    } else {
+                        println!("PR #{} not found in the current list.", pr_number);
+                    }
+                }
                 Err(_) => println!("Invalid PR number."),
             }
         }
