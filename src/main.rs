@@ -2,6 +2,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::env;
 use std::error::Error;
+use std::io::{self, BufRead, Write};
 
 #[derive(Deserialize, Debug)]
 struct PullRequest {
@@ -18,6 +19,14 @@ struct User {
     login: String,
 }
 
+#[derive(Deserialize, Debug)]
+struct Comment {
+    id: u64,
+    user: User,
+    created_at: String,
+    body: String,
+}
+
 fn get_comments_count(comments_url: &str) -> Result<usize, Box<dyn Error>> {
     let response = ureq::get(comments_url)
         .set("User-Agent", "rubber")
@@ -26,6 +35,42 @@ fn get_comments_count(comments_url: &str) -> Result<usize, Box<dyn Error>> {
 
     let comments: Vec<Value> = serde_json::from_str(&response)?;
     Ok(comments.len())
+}
+
+fn get_pr_comments(comments_url: &str) -> Result<Vec<Comment>, Box<dyn Error>> {
+    let response = ureq::get(comments_url)
+        .set("User-Agent", "rubber")
+        .call()?
+        .into_string()?;
+
+    let comments: Vec<Comment> = serde_json::from_str(&response)?;
+    Ok(comments)
+}
+
+fn display_pr_comments(pr_number: u32, owner: &str, repo: &str) -> Result<(), Box<dyn Error>> {
+    let comments_url = format!(
+        "https://api.github.com/repos/{}/{}/issues/{}/comments",
+        owner, repo, pr_number
+    );
+
+    let comments = get_pr_comments(&comments_url)?;
+
+    println!("\nComments for PR #{}:", pr_number);
+
+    if comments.is_empty() {
+        println!("No comments found for this PR.");
+    } else {
+        println!("{}", "-".repeat(80));
+        for comment in comments {
+            println!("Author: {} (at {})", comment.user.login, comment.created_at);
+            println!("{}", "-".repeat(80));
+            println!("{}", comment.body);
+            println!("{}", "-".repeat(80));
+            println!();
+        }
+    }
+
+    Ok(())
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -81,6 +126,24 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             // Print the PR URL on a separate line
             println!("       URL: {}", pr.html_url);
+        }
+
+        println!("\nEnter PR number to view comments (or 'q' to quit): ");
+        io::stdout().flush()?;
+
+        let stdin = io::stdin();
+        let mut input = String::new();
+        stdin.lock().read_line(&mut input)?;
+
+        let input = input.trim();
+        if input.to_lowercase() != "q" {
+            match input.parse::<u32>() {
+                Ok(pr_number) => match display_pr_comments(pr_number, owner, repo) {
+                    Ok(_) => {}
+                    Err(e) => println!("Error fetching comments: {}", e),
+                },
+                Err(_) => println!("Invalid PR number."),
+            }
         }
     }
 
