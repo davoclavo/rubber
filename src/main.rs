@@ -63,12 +63,57 @@ impl OutputBuffer {
     fn add_separator(&mut self, ch: char, count: usize) {
         self.add_line(&ch.to_string().repeat(count));
     }
+
+    fn add_header(&mut self, text: &str) {
+        self.add_line("");
+        self.add_line(&format!("┏━━ {} {}", text, "━".repeat(76 - text.len())));
+    }
+
+    fn add_section(&mut self, text: &str) {
+        self.add_line(&format!("┣━━ {} {}", text, "━".repeat(76 - text.len())));
+    }
+
+    fn add_box_content(&mut self, content: &str) {
+        self.add_line("┃");
+        for line in content.lines() {
+            self.add_line(&format!("┃  {}", line));
+        }
+        self.add_line("┃");
+    }
+
+    fn add_diff_header(&mut self, filename: &str) {
+        self.add_line("");
+        self.add_line(&format!(
+            "┏━━ Diff: {} {}",
+            filename,
+            "━".repeat(70 - filename.len())
+        ));
+    }
+
+    fn add_diff_content(&mut self, content: &str) {
+        for line in content.lines() {
+            let formatted_line = match line.chars().next() {
+                Some('+') => format!("┃  \x1b[32m{}\x1b[0m", line), // Green for additions
+                Some('-') => format!("┃  \x1b[31m{}\x1b[0m", line), // Red for deletions
+                _ => format!("┃  {}", line),
+            };
+            self.add_line(&formatted_line);
+        }
+    }
+
+    fn add_diff_separator(&mut self) {
+        self.add_line("");
+        self.add_line(&format!("┃  {}", "┈".repeat(80)));
+        self.add_line("");
+    }
 }
 
-fn get_comments_count(comments_url: &str, github_token: Option<&str>) -> Result<usize, Box<dyn Error>> {
-    let mut request = ureq::get(comments_url)
-        .set("User-Agent", "rubber");
-    
+fn get_comments_count(
+    comments_url: &str,
+    github_token: Option<&str>,
+) -> Result<usize, Box<dyn Error>> {
+    let mut request = ureq::get(comments_url).set("User-Agent", "rubber");
+
     if let Some(token) = github_token {
         request = request.set("Authorization", &format!("Bearer {}", token));
     }
@@ -79,10 +124,12 @@ fn get_comments_count(comments_url: &str, github_token: Option<&str>) -> Result<
     Ok(comments.len())
 }
 
-fn get_pr_comments(comments_url: &str, github_token: Option<&str>) -> Result<Vec<Comment>, Box<dyn Error>> {
-    let mut request = ureq::get(comments_url)
-        .set("User-Agent", "rubber");
-    
+fn get_pr_comments(
+    comments_url: &str,
+    github_token: Option<&str>,
+) -> Result<Vec<Comment>, Box<dyn Error>> {
+    let mut request = ureq::get(comments_url).set("User-Agent", "rubber");
+
     if let Some(token) = github_token {
         request = request.set("Authorization", &format!("Bearer {}", token));
     }
@@ -168,11 +215,10 @@ async fn get_code_review(patch: &str) -> Result<String, Box<dyn Error>> {
 }
 
 async fn analyze_patch(patch: &str, output: &mut OutputBuffer) -> Result<(), Box<dyn Error>> {
-    // Count additions and deletions
     let additions = patch.lines().filter(|l| l.starts_with('+')).count();
     let deletions = patch.lines().filter(|l| l.starts_with('-')).count();
 
-    output.add_line(&format!(
+    output.add_box_content(&format!(
         "Changed {} lines ({} additions, {} deletions)",
         additions + deletions,
         additions,
@@ -214,20 +260,28 @@ async fn analyze_patch(patch: &str, output: &mut OutputBuffer) -> Result<(), Box
 
     // Display feedback if any exists
     if !feedback.is_empty() {
-        output.add_line("\nReview Suggestions:");
-        output.add_line(
-            "╭────────────────────────────────────────────────────────────────────────────────╮",
-        );
+        output.add_section("AI Suggestions");
         for suggestion in feedback {
-            output.add_line(&format!("│ {:<76} │", suggestion));
+            output.add_box_content(&suggestion);
         }
-        output.add_line(
-            "╰────────────────────────────────────────────────────────────────────────────────╯",
-        );
-        output.add_line("");
     }
 
     Ok(())
+}
+
+fn display_comments(comments: &[Comment], output: &mut OutputBuffer) {
+    if comments.is_empty() {
+        output.add_box_content("No comments found for this PR.");
+    } else {
+        for comment in comments {
+            output.add_line(&format!(
+                "┃  Author: {} (at {})",
+                comment.user.login, comment.created_at
+            ));
+            output.add_line(&format!("┃  {}", "─".repeat(76)));
+            output.add_box_content(&comment.body);
+        }
+    }
 }
 
 fn get_pr_details(
@@ -236,20 +290,20 @@ fn get_pr_details(
     repo: &str,
     github_token: Option<&str>,
 ) -> Result<(PullRequestDetail, Vec<Comment>), Box<dyn Error>> {
-    let pr_url = format!(
+    let url = format!(
         "https://api.github.com/repos/{}/{}/pulls/{}",
         owner, repo, pr_number
     );
 
-    let mut request = ureq::get(&pr_url).set("User-Agent", "rubber");
+    let mut request = ureq::get(&url).set("User-Agent", "rubber");
     if let Some(token) = github_token {
         request = request.set("Authorization", &format!("Bearer {}", token));
     }
 
-    let pr_response = request.call()?.into_string()?;
-    let mut details: PullRequestDetail = serde_json::from_str(&pr_response)?;
+    let response = request.call()?.into_string()?;
+    let mut details: PullRequestDetail = serde_json::from_str(&response)?;
 
-    // Fetch files
+    // Fetch files data from a different endpoint
     let files_url = format!(
         "https://api.github.com/repos/{}/{}/pulls/{}/files",
         owner, repo, pr_number
@@ -261,15 +315,11 @@ fn get_pr_details(
     }
 
     let files_response = files_request.call()?.into_string()?;
-    details.files = serde_json::from_str(&files_response)?;
+    let files: Vec<FileChange> = serde_json::from_str(&files_response)?;
+    details.files = files;
 
-    // Fetch comments
-    let comments_url = format!(
-        "https://api.github.com/repos/{}/{}/issues/{}/comments",
-        owner, repo, pr_number
-    );
-
-    let comments = get_pr_comments(&comments_url, github_token)?;
+    // Get comments
+    let comments = get_pr_comments(&details.comments_url, github_token)?;
 
     Ok((details, comments))
 }
@@ -279,76 +329,63 @@ async fn display_pr_details(
     comments: &[Comment],
     output: &mut OutputBuffer,
 ) -> Result<(), Box<dyn Error>> {
-    output.add_separator('=', 80);
-    output.add_line(&format!("PR: {}", details.title));
-    output.add_separator('=', 80);
+    // Title header
+    output.add_header(&details.title);
 
-    output.add_line("\nDescription:");
-    output.add_separator('-', 80);
+    // Description section
+    output.add_section("Description");
     if let Some(body) = &details.body {
         if !body.trim().is_empty() {
-            output.add_line(body);
+            output.add_box_content(body);
         } else {
-            output.add_line("No description provided.");
+            output.add_box_content("No description provided.");
         }
     } else {
-        output.add_line("No description provided.");
+        output.add_box_content("No description provided.");
     }
-    output.add_separator('-', 80);
 
-    // Display files
-    output.add_line("\nModified Files:");
-    output.add_separator('-', 80);
+    // Files section
+    output.add_section("Modified Files");
 
     if details.files.is_empty() {
-        output.add_line("No files modified in this PR.");
+        output.add_box_content("No files modified in this PR.");
     } else {
+        // File summary table
         output.add_line(&format!(
-            "{:<50} {:<10} {:<10} {:<10}",
+            "┃  {:<50} {:<10} {:<10} {:<10}",
             "Filename", "Status", "Additions", "Deletions"
         ));
+        output.add_line(&format!("┃  {}", "─".repeat(80)));
+
+        let mut first = true;
         for file in &details.files {
             output.add_line(&format!(
-                "{:<50} {:<10} {:<10} {:<10}",
+                "┃  {:<50} {:<10} {:<10} {:<10}",
                 file.filename, file.status, file.additions, file.deletions
             ));
 
             if let Some(patch) = &file.patch {
-                output.add_line(&format!("\nDiff for {}:", file.filename));
-                output.add_line("╭────────────────────────────────────────────────────────────────────────────────╮");
-                for line in patch.lines() {
-                    output.add_line(&format!("│ {:<78} │", line));
+                if !first {
+                    output.add_diff_separator();
                 }
-                output.add_line("╰────────────────────────────────────────────────────────────────────────────────╯");
-                output.add_line("\nAnalysis:");
+                first = false;
+
+                output.add_diff_header(&file.filename);
+                output.add_diff_content(patch);
+
+                // Analysis section for this file
+                output.add_section("Static Analysis");
                 analyze_patch(patch, output).await?;
             }
         }
     }
-    output.add_separator('-', 80);
 
-    // Display comments
-    output.add_separator('-', 80);
-    output.add_separator('-', 80);
-    output.add_line("\nComments:");
+    // Comments section
+    output.add_section("Comments");
+    display_comments(comments, output);
 
-    if comments.is_empty() {
-        output.add_line("No comments found for this PR.");
-    } else {
-        for comment in comments {
-            output.add_separator('-', 80);
-            output.add_line(&format!(
-                "│ Author: {} (at {})",
-                comment.user.login, comment.created_at
-            ));
-            output.add_separator('-', 80);
-            for line in comment.body.lines() {
-                output.add_line(&format!("│ {}", line));
-            }
-            output.add_separator('-', 80);
-            output.add_line("");
-        }
-    }
+    output.add_line(&format!("┗{}", "━".repeat(79)));
+    output.add_line("");
 
     Ok(())
 }
@@ -357,12 +394,41 @@ fn find_pr_by_number(prs: &[PullRequest], number: u32) -> Option<&PullRequest> {
     prs.iter().find(|pr| pr.number == number)
 }
 
+impl Default for FileChange {
+    fn default() -> Self {
+        Self {
+            filename: String::new(),
+            status: String::new(),
+            additions: 0,
+            deletions: 0,
+            changes: 0,
+            patch: None,
+        }
+    }
+}
+
+impl Default for PullRequestDetail {
+    fn default() -> Self {
+        Self {
+            title: String::new(),
+            body: None,
+            html_url: String::new(),
+            user: User {
+                login: String::new(),
+            },
+            created_at: String::new(),
+            comments_url: String::new(),
+            files: Vec::new(),
+        }
+    }
+}
+
 async fn run() -> Result<String, Box<dyn std::error::Error>> {
     // Initialize logger
     env_logger::init();
 
     let github_token = env::var("GITHUB_TOKEN").ok();
-    
+
     let mut output = OutputBuffer::new();
     let args: Vec<String> = env::args().collect();
 
@@ -430,7 +496,8 @@ async fn run() -> Result<String, Box<dyn std::error::Error>> {
             };
 
             // Fetch comment count for this PR
-            let comments_count = match get_comments_count(&pr.comments_url, github_token.as_deref()) {
+            let comments_count = match get_comments_count(&pr.comments_url, github_token.as_deref())
+            {
                 Ok(count) => count.to_string(),
                 Err(_) => "Error".to_string(),
             };
