@@ -26,7 +26,11 @@ Rubber is a command-line tool that helps you review GitHub Pull Requests by prov
    ```bash
    export ANTHROPIC_API_KEY='your-key-here'
    ```
-3. Build the project:
+3. Configure logging level (optional):
+   ```bash
+   export RUST_LOG=info  # Options: error, warn, info, debug, trace
+   ```
+4. Build the project:
    ```bash
    cargo build --release
    ```
@@ -39,6 +43,13 @@ Rubber is a command-line tool that helps you review GitHub Pull Requests by prov
 rubber <owner> <repo> [pr_number]
 ```
 
+### Environment Variables
+
+- `ANTHROPIC_API_KEY`: Your Anthropic API key for AI-powered reviews
+- `RUST_LOG`: Logging level configuration (default: info)
+  - Available levels: error, warn, info, debug, trace
+  - Example: `RUST_LOG=debug` for verbose logging
+
 ### Examples
 
 List recent PRs:
@@ -46,9 +57,9 @@ List recent PRs:
 rubber microsoft typescript
 ```
 
-Review specific PR:
+Review specific PR with debug logging:
 ```bash
-rubber microsoft typescript 12345
+RUST_LOG=debug rubber microsoft typescript 12345
 ```
 
 ## 🔍 Current Analysis Features

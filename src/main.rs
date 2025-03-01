@@ -1,11 +1,11 @@
+use log::{debug, error, info, warn};
+use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde::Deserialize;
+use serde::Serialize;
 use serde_json::Value;
 use std::env;
 use std::error::Error;
 use std::io::{self, BufRead, Write};
-use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
-use serde::Serialize;
-use serde_json::json;
 
 #[derive(Deserialize, Debug)]
 struct PullRequest {
@@ -43,6 +43,26 @@ struct ClaudeRequest {
     model: String,
     messages: Vec<ClaudeMessage>,
     max_tokens: u32,
+}
+
+#[derive(Default)]
+struct OutputBuffer {
+    content: String,
+}
+
+impl OutputBuffer {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn add_line(&mut self, line: impl AsRef<str>) {
+        self.content.push_str(line.as_ref());
+        self.content.push('\n');
+    }
+
+    fn add_separator(&mut self, ch: char, count: usize) {
+        self.add_line(&ch.to_string().repeat(count));
+    }
 }
 
 fn get_comments_count(comments_url: &str) -> Result<usize, Box<dyn Error>> {
@@ -85,8 +105,8 @@ struct FileChange {
 }
 
 async fn get_code_review(patch: &str) -> Result<String, Box<dyn Error>> {
-    let api_key = env::var("ANTHROPIC_API_KEY")
-        .expect("ANTHROPIC_API_KEY environment variable not set");
+    let api_key =
+        env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY environment variable not set");
 
     let prompt = format!(
         "Please review this code patch and provide specific, actionable feedback about potential issues, \
@@ -98,14 +118,8 @@ async fn get_code_review(patch: &str) -> Result<String, Box<dyn Error>> {
     let client = reqwest::Client::new();
     let mut headers = HeaderMap::new();
     headers.insert("x-api-key", HeaderValue::from_str(&api_key)?);
-    headers.insert(
-        CONTENT_TYPE,
-        HeaderValue::from_static("application/json"),
-    );
-    headers.insert(
-        "anthropic-version",
-        HeaderValue::from_static("2023-06-01"),
-    );
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
 
     let messages = vec![ClaudeMessage {
         role: "user".to_string(),
@@ -127,8 +141,8 @@ async fn get_code_review(patch: &str) -> Result<String, Box<dyn Error>> {
         .json::<serde_json::Value>()
         .await?;
 
-    println!("Request: {:?}", request);
-    println!("Response: {:?}", response);
+    debug!("Request: {:?}", request);
+    debug!("Response: {:?}", response);
 
     let review = response["content"][0]["text"]
         .as_str()
@@ -181,7 +195,7 @@ async fn analyze_patch(patch: &str) -> (String, Vec<String>, Vec<String>, Option
     // Add Claude's review if available
     match get_code_review(patch).await {
         Ok(review) => claude_review = Some(review),
-        Err(e) => println!("Error getting code review: {}", e),
+        Err(e) => error!("Error getting code review: {}", e),
     }
 
     (summary, questions, comments, claude_review)
@@ -222,93 +236,100 @@ fn get_pr_details(
     Ok(details)
 }
 
-async fn display_pr_details(pr: &PullRequest, owner: &str, repo: &str) -> Result<(), Box<dyn Error>> {
-    println!("\n{}", "=".repeat(80));
-    println!("PR #{}: {}", pr.number, pr.title);
-    println!("{}", "=".repeat(80));
+async fn display_pr_details(
+    pr: &PullRequest,
+    owner: &str,
+    repo: &str,
+    output: &mut OutputBuffer,
+) -> Result<(), Box<dyn Error>> {
+    output.add_separator('=', 80);
+    output.add_line(&format!("PR #{}: {}", pr.number, pr.title));
+    output.add_separator('=', 80);
 
-    println!("\nDescription:");
-    println!("{}", "-".repeat(80));
+    output.add_line("\nDescription:");
+    output.add_separator('-', 80);
     if let Some(body) = &pr.body {
         if !body.trim().is_empty() {
-            println!("{}", body);
+            output.add_line(body);
         } else {
-            println!("No description provided.");
+            output.add_line("No description provided.");
         }
     } else {
-        println!("No description provided.");
+        output.add_line("No description provided.");
     }
-    println!("{}", "-".repeat(80));
+    output.add_separator('-', 80);
 
-    // Get the PR details including modified files
     match get_pr_details(pr.number, owner, repo) {
         Ok(details) => {
-            println!("\nModified Files:");
-            println!("{}", "-".repeat(80));
+            output.add_line("\nModified Files:");
+            output.add_separator('-', 80);
 
             if details.files.is_empty() {
-                println!("No files modified in this PR.");
+                output.add_line("No files modified in this PR.");
             } else {
-                println!(
+                output.add_line(&format!(
                     "{:<50} {:<10} {:<10} {:<10}",
                     "Filename", "Status", "Additions", "Deletions"
-                );
+                ));
                 for file in details.files {
-                    println!(
+                    output.add_line(&format!(
                         "{:<50} {:<10} {:<10} {:<10}",
                         file.filename, file.status, file.additions, file.deletions
-                    );
+                    ));
 
-                    // Display the diff/patch if available
                     if let Some(patch) = file.patch {
-                        println!("\nDiff for {}:", file.filename);
-                        println!("{}", "-".repeat(80));
-                        println!("{}", patch);
-                        println!("{}", "-".repeat(80));
+                        output.add_line(&format!("\nDiff for {}:", file.filename));
+                        output.add_separator('-', 80);
+                        debug!("{}", patch);
+                        output.add_separator('-', 80);
 
-                        // Analyze the patch
-                        let (summary, questions, comments, claude_review) = analyze_patch(&patch).await;
+                        let (summary, questions, comments, claude_review) =
+                            analyze_patch(&patch).await;
 
-                        println!("\nAnalysis:");
-                        println!("Summary: {}", summary);
+                        output.add_line("\nAnalysis:");
+                        output.add_line(&format!("Summary: {}", summary));
 
                         if !questions.is_empty() {
-                            println!("\nQuestions to consider:");
+                            output.add_line("\nQuestions to consider:");
                             for q in questions {
-                                println!("- {}", q);
+                                output.add_line(&format!("- {}", q));
                             }
                         }
 
                         if !comments.is_empty() {
-                            println!("\nPotential feedback:");
+                            output.add_line("\nPotential feedback:");
                             for c in comments {
-                                println!("- {}", c);
+                                output.add_line(&format!("- {}", c));
                             }
                         }
 
                         if let Some(review) = claude_review {
-                            println!("\nClaude's Review:");
-                            println!("{}", "-".repeat(80));
-                            println!("{}", review);
-                            println!("{}", "-".repeat(80));
+                            output.add_line("\nClaude's Review:");
+                            output.add_separator('-', 80);
+                            output.add_line(&review);
+                            output.add_separator('-', 80);
                         }
-
-                        println!();
                     }
                 }
             }
-            println!("{}", "-".repeat(80));
+            output.add_separator('-', 80);
         }
         Err(e) => {
-            println!("\nError fetching PR details: {}", e);
-            println!("Unable to display modified files.");
+            error!("\nError fetching PR details: {}", e);
+            output.add_line("\nError fetching PR details.");
+            output.add_line("Unable to display modified files.");
         }
     }
 
     Ok(())
 }
 
-fn display_pr_comments(pr_number: u32, owner: &str, repo: &str) -> Result<(), Box<dyn Error>> {
+fn display_pr_comments(
+    pr_number: u32,
+    owner: &str,
+    repo: &str,
+    output: &mut OutputBuffer,
+) -> Result<(), Box<dyn Error>> {
     let comments_url = format!(
         "https://api.github.com/repos/{}/{}/issues/{}/comments",
         owner, repo, pr_number
@@ -316,18 +337,21 @@ fn display_pr_comments(pr_number: u32, owner: &str, repo: &str) -> Result<(), Bo
 
     let comments = get_pr_comments(&comments_url)?;
 
-    println!("\nComments for PR #{}:", pr_number);
+    output.add_line(&format!("\nComments for PR #{}:", pr_number));
 
     if comments.is_empty() {
-        println!("No comments found for this PR.");
+        output.add_line("No comments found for this PR.");
     } else {
-        println!("{}", "-".repeat(80));
+        output.add_separator('-', 80);
         for comment in comments {
-            println!("Author: {} (at {})", comment.user.login, comment.created_at);
-            println!("{}", "-".repeat(80));
-            println!("{}", comment.body);
-            println!("{}", "-".repeat(80));
-            println!();
+            output.add_line(&format!(
+                "Author: {} (at {})",
+                comment.user.login, comment.created_at
+            ));
+            output.add_separator('-', 80);
+            output.add_line(&comment.body);
+            output.add_separator('-', 80);
+            output.add_line("");
         }
     }
 
@@ -338,47 +362,50 @@ fn find_pr_by_number(prs: &[PullRequest], number: u32) -> Option<&PullRequest> {
     prs.iter().find(|pr| pr.number == number)
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn run() -> Result<String, Box<dyn std::error::Error>> {
+    // Initialize logger
+    env_logger::init();
+
+    let mut output = OutputBuffer::new();
     let args: Vec<String> = env::args().collect();
 
     if args.len() < 3 {
-        eprintln!("Usage: {} <owner> <repo> [pr_number]", args[0]);
+        error!("Usage: {} <owner> <repo> [pr_number]", args[0]);
         std::process::exit(1);
     }
 
     let owner = &args[1];
     let repo = &args[2];
-    
+
     // If PR number is provided, show its details directly
     if let Some(pr_number) = args.get(3) {
         match pr_number.parse::<u32>() {
             Ok(number) => {
-                // Fetch the specific PR
                 let pr_url = format!(
                     "https://api.github.com/repos/{}/{}/pulls/{}",
                     owner, repo, number
                 );
-                
+
                 let pr = ureq::get(&pr_url)
                     .set("User-Agent", "rubber")
                     .call()?
                     .into_json::<PullRequest>()?;
-                
-                // Display PR details and comments
-                display_pr_details(&pr, owner, repo).await?;
-                display_pr_comments(number, owner, repo)?;
-                return Ok(());
+
+                display_pr_details(&pr, owner, repo, &mut output).await?;
+                display_pr_comments(number, owner, repo, &mut output)?;
+                return Ok(output.content);
             }
             Err(_) => {
-                eprintln!("Invalid PR number: {}", pr_number);
-                std::process::exit(1);
+                error!("Invalid PR number: {}", pr_number);
+                return Ok(format!("Invalid PR number: {}", pr_number));
             }
         }
     }
 
-    // Original interactive flow for listing PRs
-    println!("Fetching the 10 most recent PRs for {}/{}", owner, repo);
+    output.add_line(&format!(
+        "Fetching the 10 most recent PRs for {}/{}",
+        owner, repo
+    ));
 
     let url = format!(
         "https://api.github.com/repos/{}/{}/pulls?state=all&sort=created&direction=desc&per_page=10",
@@ -391,13 +418,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .into_json::<Vec<PullRequest>>()?;
 
     if response.is_empty() {
-        println!("No pull requests found.");
+        output.add_line("No pull requests found.");
+        return Ok(output.content);
     } else {
-        println!(
+        output.add_line(&format!(
             "{:<6} {:<50} {:<20} {:<15} {:<15}",
             "PR#", "Title", "Author", "Created At", "Comments"
-        );
-        println!("{}", "-".repeat(106));
+        ));
+        output.add_line(&"-".repeat(106));
 
         for pr in &response {
             // Truncate title if too long
@@ -413,40 +441,67 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 Err(_) => "Error".to_string(),
             };
 
-            println!(
+            output.add_line(&format!(
                 "{:<6} {:<50} {:<20} {:<15} {:<15}",
                 pr.number, title, pr.user.login, pr.created_at, comments_count
-            );
+            ));
 
             // Print the PR URL on a separate line
-            println!("       URL: {}", pr.html_url);
+            output.add_line(&format!("       URL: {}", pr.html_url));
         }
 
-        println!("\nEnter PR number to view details (or 'q' to quit): ");
+        // Print the accumulated output before asking for input
+        print!("{}", output.content);
+        io::stdout().flush()?;
+
+        // Clear the output buffer since we've printed it
+        output.content.clear();
+
+        output.add_line("\nEnter PR number to view details (or 'q' to quit): ");
+        print!("{}", output.content);
         io::stdout().flush()?;
 
         let stdin = io::stdin();
         let mut input = String::new();
         stdin.lock().read_line(&mut input)?;
 
+        // Clear the output buffer again for the next phase
+        output.content.clear();
+
         let input = input.trim();
         if input.to_lowercase() != "q" {
             match input.parse::<u32>() {
                 Ok(pr_number) => {
                     if let Some(pr) = find_pr_by_number(&response, pr_number) {
-                        // Display PR details (title, description, modified files)
-                        display_pr_details(pr, owner, repo).await?;
-
-                        // Display PR comments
-                        display_pr_comments(pr_number, owner, repo)?;
+                        display_pr_details(pr, owner, repo, &mut output).await?;
+                        display_pr_comments(pr_number, owner, repo, &mut output)?;
+                        return Ok(output.content);
                     } else {
-                        println!("PR #{} not found in the current list.", pr_number);
+                        warn!("PR #{} not found in the current list.", pr_number);
+                        return Ok(format!("PR #{} not found in the current list.", pr_number));
                     }
                 }
-                Err(_) => println!("Invalid PR number."),
+                Err(_) => warn!("Invalid PR number."),
             }
         }
     }
 
-    Ok(())
+    Ok(output.content)
+}
+
+#[tokio::main]
+async fn main() {
+    // Run the main logic and store the result
+    match run().await {
+        Ok(output) => {
+            // Print the accumulated output
+            print!("{}", output);
+            // Flush stdout to ensure everything is printed
+            io::stdout().flush().unwrap();
+        }
+        Err(e) => {
+            log::error!("Error: {}", e);
+            std::process::exit(1);
+        }
+    }
 }
