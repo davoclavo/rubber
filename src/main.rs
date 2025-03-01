@@ -65,6 +65,7 @@ struct FileChange {
     additions: u32,
     deletions: u32,
     changes: u32,
+    patch: Option<String>,
 }
 
 fn get_pr_details(
@@ -138,6 +139,15 @@ fn display_pr_details(pr: &PullRequest, owner: &str, repo: &str) -> Result<(), B
                         "{:<50} {:<10} {:<10} {:<10}",
                         file.filename, file.status, file.additions, file.deletions
                     );
+                    
+                    // Display the diff/patch if available
+                    if let Some(patch) = file.patch {
+                        println!("\nDiff for {}:", file.filename);
+                        println!("{}", "-".repeat(80));
+                        println!("{}", patch);
+                        println!("{}", "-".repeat(80));
+                        println!();
+                    }
                 }
             }
             println!("{}", "-".repeat(80));
