@@ -102,9 +102,7 @@ impl OutputBuffer {
     }
 
     fn add_diff_separator(&mut self) {
-        self.add_line("");
-        self.add_line(&format!("┃  {}", "┈".repeat(80)));
-        self.add_line("");
+        self.add_line("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     }
 }
 
@@ -315,11 +313,10 @@ fn display_comments(comments: &[Comment], output: &mut OutputBuffer) {
         output.add_box_content("No comments found for this PR.");
     } else {
         for comment in comments {
-            output.add_line(&format!(
-                "┃  Author: {} (at {})",
+            output.add_section(&format!(
+                "Author: {} (at {})",
                 comment.user.login, comment.created_at
             ));
-            output.add_line(&format!("┃  {}", "─".repeat(76)));
             output.add_box_content(&comment.body);
         }
     }
@@ -421,11 +418,15 @@ async fn display_pr_details(
         }
     }
 
+
+    output.add_diff_separator();
+    output.add_line("");
+
     // Comments section
-    output.add_section("Comments");
+    output.add_header("Comments");
     display_comments(comments, output);
 
-    output.add_line(&format!("┗{}", "━".repeat(79)));
+    output.add_diff_separator();
     output.add_line("");
 
     Ok(())
