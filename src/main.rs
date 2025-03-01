@@ -167,7 +167,9 @@ async fn analyze_patch(patch: &str, output: &mut OutputBuffer) -> Result<(), Box
     // Look for common patterns that might need attention
     if patch.contains("TODO") || patch.contains("FIXME") {
         output.add_line("\nQuestions to consider:");
-        output.add_line("- There are TODOs/FIXMEs in the code - should these be addressed before merging?");
+        output.add_line(
+            "- There are TODOs/FIXMEs in the code - should these be addressed before merging?",
+        );
     }
 
     if patch.contains("println!") || patch.contains("dbg!") {
@@ -188,7 +190,9 @@ async fn analyze_patch(patch: &str, output: &mut OutputBuffer) -> Result<(), Box
         if !has_comments {
             output.add_line("\nPotential feedback:");
         }
-        output.add_line("- Consider if panic! is appropriate here or if errors should be handled gracefully");
+        output.add_line(
+            "- Consider if panic! is appropriate here or if errors should be handled gracefully",
+        );
     }
 
     // Add Claude's review if available
