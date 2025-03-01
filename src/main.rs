@@ -90,6 +90,9 @@ struct PullRequestDetail {
     title: String,
     body: Option<String>,
     html_url: String,
+    user: User,
+    created_at: String,
+    comments_url: String,
     #[serde(default)]
     files: Vec<FileChange>,
 }
@@ -223,14 +226,13 @@ fn get_pr_details(
     pr_number: u32,
     owner: &str,
     repo: &str,
-) -> Result<PullRequestDetail, Box<dyn Error>> {
-    // The correct endpoint for PR details
+) -> Result<(PullRequestDetail, Vec<Comment>), Box<dyn Error>> {
+    // Fetch PR details and files in one call
     let pr_url = format!(
         "https://api.github.com/repos/{}/{}/pulls/{}",
         owner, repo, pr_number
     );
 
-    // Fetch PR details
     let pr_response = ureq::get(&pr_url)
         .set("User-Agent", "rubber")
         .call()?
@@ -238,7 +240,7 @@ fn get_pr_details(
 
     let mut details: PullRequestDetail = serde_json::from_str(&pr_response)?;
 
-    // Fetch files separately using the files endpoint
+    // Fetch files
     let files_url = format!(
         "https://api.github.com/repos/{}/{}/pulls/{}/files",
         owner, repo, pr_number
@@ -251,22 +253,29 @@ fn get_pr_details(
 
     details.files = serde_json::from_str(&files_response)?;
 
-    Ok(details)
+    // Fetch comments
+    let comments_url = format!(
+        "https://api.github.com/repos/{}/{}/issues/{}/comments",
+        owner, repo, pr_number
+    );
+
+    let comments = get_pr_comments(&comments_url)?;
+
+    Ok((details, comments))
 }
 
 async fn display_pr_details(
-    pr: &PullRequest,
-    owner: &str,
-    repo: &str,
+    details: &PullRequestDetail,
+    comments: &[Comment],
     output: &mut OutputBuffer,
 ) -> Result<(), Box<dyn Error>> {
     output.add_separator('=', 80);
-    output.add_line(&format!("PR #{}: {}", pr.number, pr.title));
+    output.add_line(&format!("PR: {}", details.title));
     output.add_separator('=', 80);
 
     output.add_line("\nDescription:");
     output.add_separator('-', 80);
-    if let Some(body) = &pr.body {
+    if let Some(body) = &details.body {
         if !body.trim().is_empty() {
             output.add_line(body);
         } else {
@@ -277,64 +286,41 @@ async fn display_pr_details(
     }
     output.add_separator('-', 80);
 
-    match get_pr_details(pr.number, owner, repo) {
-        Ok(details) => {
-            output.add_line("\nModified Files:");
-            output.add_separator('-', 80);
+    // Display files
+    output.add_line("\nModified Files:");
+    output.add_separator('-', 80);
 
-            if details.files.is_empty() {
-                output.add_line("No files modified in this PR.");
-            } else {
-                output.add_line(&format!(
-                    "{:<50} {:<10} {:<10} {:<10}",
-                    "Filename", "Status", "Additions", "Deletions"
-                ));
-                for file in details.files {
-                    output.add_line(&format!(
-                        "{:<50} {:<10} {:<10} {:<10}",
-                        file.filename, file.status, file.additions, file.deletions
-                    ));
+    if details.files.is_empty() {
+        output.add_line("No files modified in this PR.");
+    } else {
+        output.add_line(&format!(
+            "{:<50} {:<10} {:<10} {:<10}",
+            "Filename", "Status", "Additions", "Deletions"
+        ));
+        for file in &details.files {
+            output.add_line(&format!(
+                "{:<50} {:<10} {:<10} {:<10}",
+                file.filename, file.status, file.additions, file.deletions
+            ));
 
-                    if let Some(patch) = file.patch {
-                        output.add_line(&format!("\nDiff for {}:", file.filename));
-                        output.add_line("╭────────────────────────────────────────────────────────────────────────────────╮");
-                        for line in patch.lines() {
-                            output.add_line(&format!("│ {:<78} │", line));
-                        }
-                        output.add_line("╰────────────────────────────────────────────────────────────────────────────────╯");
-                        output.add_line("\nAnalysis:");
-                        analyze_patch(&patch, output).await?;
-                    }
+            if let Some(patch) = &file.patch {
+                output.add_line(&format!("\nDiff for {}:", file.filename));
+                output.add_line("╭────────────────────────────────────────────────────────────────────────────────╮");
+                for line in patch.lines() {
+                    output.add_line(&format!("│ {:<78} │", line));
                 }
+                output.add_line("╰────────────────────────────────────────────────────────────────────────────────╯");
+                output.add_line("\nAnalysis:");
+                analyze_patch(patch, output).await?;
             }
-            output.add_separator('-', 80);
-        }
-        Err(e) => {
-            error!("\nError fetching PR details: {}", e);
-            output.add_line("\nError fetching PR details.");
-            output.add_line("Unable to display modified files.");
         }
     }
+    output.add_separator('-', 80);
 
-    Ok(())
-}
-
-fn display_pr_comments(
-    pr_number: u32,
-    owner: &str,
-    repo: &str,
-    output: &mut OutputBuffer,
-) -> Result<(), Box<dyn Error>> {
-    let comments_url = format!(
-        "https://api.github.com/repos/{}/{}/issues/{}/comments",
-        owner, repo, pr_number
-    );
-
-    let comments = get_pr_comments(&comments_url)?;
-
+    // Display comments
     output.add_separator('-', 80);
     output.add_separator('-', 80);
-    output.add_line(&format!("\nComments for PR #{}:", pr_number));
+    output.add_line("\nComments:");
 
     if comments.is_empty() {
         output.add_line("No comments found for this PR.");
@@ -379,21 +365,16 @@ async fn run() -> Result<String, Box<dyn std::error::Error>> {
     // If PR number is provided, show its details directly
     if let Some(pr_number) = args.get(3) {
         match pr_number.parse::<u32>() {
-            Ok(number) => {
-                let pr_url = format!(
-                    "https://api.github.com/repos/{}/{}/pulls/{}",
-                    owner, repo, number
-                );
-
-                let pr = ureq::get(&pr_url)
-                    .set("User-Agent", "rubber")
-                    .call()?
-                    .into_json::<PullRequest>()?;
-
-                display_pr_details(&pr, owner, repo, &mut output).await?;
-                display_pr_comments(number, owner, repo, &mut output)?;
-                return Ok(output.content);
-            }
+            Ok(number) => match get_pr_details(number, owner, repo) {
+                Ok((details, comments)) => {
+                    display_pr_details(&details, &comments, &mut output).await?;
+                    return Ok(output.content);
+                }
+                Err(e) => {
+                    error!("Error fetching PR details: {}", e);
+                    return Ok("Error fetching PR details.".to_string());
+                }
+            },
             Err(_) => {
                 error!("Invalid PR number: {}", pr_number);
                 return Ok(format!("Invalid PR number: {}", pr_number));
@@ -412,7 +393,7 @@ async fn run() -> Result<String, Box<dyn std::error::Error>> {
     );
 
     let response = ureq::get(&url)
-        .set("User-Agent", "rubber")
+        .set("User-Agent", "rubbery")
         .call()?
         .into_json::<Vec<PullRequest>>()?;
 
@@ -471,10 +452,17 @@ async fn run() -> Result<String, Box<dyn std::error::Error>> {
         if input.to_lowercase() != "q" {
             match input.parse::<u32>() {
                 Ok(pr_number) => {
-                    if let Some(pr) = find_pr_by_number(&response, pr_number) {
-                        display_pr_details(pr, owner, repo, &mut output).await?;
-                        display_pr_comments(pr_number, owner, repo, &mut output)?;
-                        return Ok(output.content);
+                    if let Some(_pr) = find_pr_by_number(&response, pr_number) {
+                        match get_pr_details(pr_number, owner, repo) {
+                            Ok((details, comments)) => {
+                                display_pr_details(&details, &comments, &mut output).await?;
+                                return Ok(output.content);
+                            }
+                            Err(e) => {
+                                error!("Error fetching PR details: {}", e);
+                                return Ok("Error fetching PR details.".to_string());
+                            }
+                        }
                     } else {
                         warn!("PR #{} not found in the current list.", pr_number);
                         return Ok(format!("PR #{} not found in the current list.", pr_number));
