@@ -228,7 +228,7 @@ async fn analyze_patch(patch: &str, output: &mut OutputBuffer) -> Result<(), Box
     // Prepare to collect feedback
     let mut feedback: Vec<String> = Vec::new();
 
-    // Collect all feedback items
+    // Basic code hygiene
     if patch.contains("TODO") || patch.contains("FIXME") {
         feedback.push("Outstanding TODOs/FIXMEs should be addressed before merging".to_string());
     }
@@ -237,14 +237,55 @@ async fn analyze_patch(patch: &str, output: &mut OutputBuffer) -> Result<(), Box
         feedback.push("Remove debug print statements before merging".to_string());
     }
 
+    // Error handling patterns
     if patch.contains("unwrap()") {
         feedback.push("Replace unwrap() calls with proper error handling".to_string());
     }
 
+    if patch.contains("expect(") {
+        feedback.push("Consider replacing expect() with more graceful error handling".to_string());
+    }
+
     if patch.contains("panic!") {
-        feedback.push(
-            "Consider replacing panic! with Result/Option for graceful error handling".to_string(),
-        );
+        feedback.push("Consider replacing panic! with Result/Option for graceful error handling".to_string());
+    }
+
+    // Memory and performance patterns
+    if patch.contains("Clone") || patch.contains("clone()") {
+        feedback.push("Review clone() usage - consider using references where possible".to_string());
+    }
+
+    if patch.contains("Box::new") {
+        feedback.push("Verify if heap allocation via Box is necessary".to_string());
+    }
+
+    if patch.contains("Vec::new()") && !patch.contains("with_capacity") {
+        feedback.push("Consider using Vec::with_capacity() if the size is known".to_string());
+    }
+
+    // Concurrency and async patterns
+    if patch.contains("Mutex") && !patch.contains("RwLock") {
+        feedback.push("Consider if RwLock would be more appropriate than Mutex".to_string());
+    }
+
+    if patch.contains(".await") && patch.contains("Vec") {
+        feedback.push("Review concurrent operations on Vec - consider using join_all() for parallel execution".to_string());
+    }
+
+    // Security considerations
+    if patch.contains("unsafe") {
+        feedback.push("Unsafe block detected - ensure safety guarantees are documented".to_string());
+    }
+
+    if patch.contains("as_ptr") || patch.contains("as_mut_ptr") {
+        feedback.push("Raw pointer usage detected - verify memory safety".to_string());
+    }
+
+    // Testing patterns
+    let has_new_fn = patch.lines().any(|l| l.contains("fn ") && !l.contains("test"));
+    let has_test = patch.contains("#[test]");
+    if has_new_fn && !has_test {
+        feedback.push("New functions added without corresponding tests".to_string());
     }
 
     // Get Claude's review
