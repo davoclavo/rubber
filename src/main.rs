@@ -152,18 +152,13 @@ async fn get_code_review(patch: &str) -> Result<String, Box<dyn Error>> {
     Ok(review)
 }
 
-async fn analyze_patch(patch: &str) -> (String, Vec<String>, Vec<String>, Option<String>) {
-    let mut summary = String::new();
-    let mut questions = Vec::new();
-    let mut comments = Vec::new();
-    let mut claude_review = None;
-
+async fn analyze_patch(patch: &str, output: &mut OutputBuffer) -> Result<(), Box<dyn Error>> {
     // Count additions and deletions
     let additions = patch.lines().filter(|l| l.starts_with('+')).count();
     let deletions = patch.lines().filter(|l| l.starts_with('-')).count();
 
-    summary.push_str(&format!(
-        "Changed {} lines ({} additions, {} deletions)\n",
+    output.add_line(&format!(
+        "Changed {} lines ({} additions, {} deletions)",
         additions + deletions,
         additions,
         deletions
@@ -171,34 +166,45 @@ async fn analyze_patch(patch: &str) -> (String, Vec<String>, Vec<String>, Option
 
     // Look for common patterns that might need attention
     if patch.contains("TODO") || patch.contains("FIXME") {
-        questions.push(
-            "There are TODOs/FIXMEs in the code - should these be addressed before merging?".into(),
-        );
+        output.add_line("\nQuestions to consider:");
+        output.add_line("- There are TODOs/FIXMEs in the code - should these be addressed before merging?");
     }
 
     if patch.contains("println!") || patch.contains("dbg!") {
-        questions.push("Debug print statements found - are these intended for production?".into());
+        output.add_line("- Debug print statements found - are these intended for production?");
     }
 
     // Look for potential improvements
+    let mut has_comments = false;
     if patch.contains("unwrap()") {
-        comments.push("Consider handling errors explicitly instead of using unwrap()".into());
+        if !has_comments {
+            output.add_line("\nPotential feedback:");
+            has_comments = true;
+        }
+        output.add_line("- Consider handling errors explicitly instead of using unwrap()");
     }
 
     if patch.contains("panic!") {
-        comments.push(
-            "Consider if panic! is appropriate here or if errors should be handled gracefully"
-                .into(),
-        );
+        if !has_comments {
+            output.add_line("\nPotential feedback:");
+        }
+        output.add_line("- Consider if panic! is appropriate here or if errors should be handled gracefully");
     }
 
     // Add Claude's review if available
     match get_code_review(patch).await {
-        Ok(review) => claude_review = Some(review),
-        Err(e) => error!("Error getting code review: {}", e),
+        Ok(review) => {
+            output.add_line("\nClaude's Review:");
+            output.add_separator('-', 80);
+            output.add_line(&review);
+            output.add_separator('-', 80);
+        }
+        Err(e) => {
+            error!("Error getting code review: {}", e);
+        }
     }
 
-    (summary, questions, comments, claude_review)
+    Ok(())
 }
 
 fn get_pr_details(
@@ -280,35 +286,9 @@ async fn display_pr_details(
                     if let Some(patch) = file.patch {
                         output.add_line(&format!("\nDiff for {}:", file.filename));
                         output.add_separator('-', 80);
-                        debug!("{}", patch);
-                        output.add_separator('-', 80);
-
-                        let (summary, questions, comments, claude_review) =
-                            analyze_patch(&patch).await;
-
+                        output.add_line(format!("{}", patch));
                         output.add_line("\nAnalysis:");
-                        output.add_line(&format!("Summary: {}", summary));
-
-                        if !questions.is_empty() {
-                            output.add_line("\nQuestions to consider:");
-                            for q in questions {
-                                output.add_line(&format!("- {}", q));
-                            }
-                        }
-
-                        if !comments.is_empty() {
-                            output.add_line("\nPotential feedback:");
-                            for c in comments {
-                                output.add_line(&format!("- {}", c));
-                            }
-                        }
-
-                        if let Some(review) = claude_review {
-                            output.add_line("\nClaude's Review:");
-                            output.add_separator('-', 80);
-                            output.add_line(&review);
-                            output.add_separator('-', 80);
-                        }
+                        analyze_patch(&patch, output).await?;
                     }
                 }
             }
