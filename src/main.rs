@@ -68,6 +68,49 @@ struct FileChange {
     patch: Option<String>,
 }
 
+/// Analyzes a patch and returns insights about the changes
+fn analyze_patch(patch: &str) -> (String, Vec<String>, Vec<String>) {
+    let mut summary = String::new();
+    let mut questions = Vec::new();
+    let mut comments = Vec::new();
+
+    // Count additions and deletions
+    let additions = patch.lines().filter(|l| l.starts_with('+')).count();
+    let deletions = patch.lines().filter(|l| l.starts_with('-')).count();
+
+    summary.push_str(&format!(
+        "Changed {} lines ({} additions, {} deletions)\n",
+        additions + deletions,
+        additions,
+        deletions
+    ));
+
+    // Look for common patterns that might need attention
+    if patch.contains("TODO") || patch.contains("FIXME") {
+        questions.push(
+            "There are TODOs/FIXMEs in the code - should these be addressed before merging?".into(),
+        );
+    }
+
+    if patch.contains("println!") || patch.contains("dbg!") {
+        questions.push("Debug print statements found - are these intended for production?".into());
+    }
+
+    // Look for potential improvements
+    if patch.contains("unwrap()") {
+        comments.push("Consider handling errors explicitly instead of using unwrap()".into());
+    }
+
+    if patch.contains("panic!") {
+        comments.push(
+            "Consider if panic! is appropriate here or if errors should be handled gracefully"
+                .into(),
+        );
+    }
+
+    (summary, questions, comments)
+}
+
 fn get_pr_details(
     pr_number: u32,
     owner: &str,
@@ -139,13 +182,34 @@ fn display_pr_details(pr: &PullRequest, owner: &str, repo: &str) -> Result<(), B
                         "{:<50} {:<10} {:<10} {:<10}",
                         file.filename, file.status, file.additions, file.deletions
                     );
-                    
+
                     // Display the diff/patch if available
                     if let Some(patch) = file.patch {
                         println!("\nDiff for {}:", file.filename);
                         println!("{}", "-".repeat(80));
                         println!("{}", patch);
                         println!("{}", "-".repeat(80));
+
+                        // Analyze the patch
+                        let (summary, questions, comments) = analyze_patch(&patch);
+
+                        println!("\nAnalysis:");
+                        println!("Summary: {}", summary);
+
+                        if !questions.is_empty() {
+                            println!("\nQuestions to consider:");
+                            for q in questions {
+                                println!("- {}", q);
+                            }
+                        }
+
+                        if !comments.is_empty() {
+                            println!("\nPotential feedback:");
+                            for c in comments {
+                                println!("- {}", c);
+                            }
+                        }
+
                         println!();
                     }
                 }
