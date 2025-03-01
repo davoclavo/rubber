@@ -259,13 +259,41 @@ fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = env::args().collect();
 
     if args.len() < 3 {
-        eprintln!("Usage: {} <owner> <repo>", args[0]);
+        eprintln!("Usage: {} <owner> <repo> [pr_number]", args[0]);
         std::process::exit(1);
     }
 
     let owner = &args[1];
     let repo = &args[2];
+    
+    // If PR number is provided, show its details directly
+    if let Some(pr_number) = args.get(3) {
+        match pr_number.parse::<u32>() {
+            Ok(number) => {
+                // Fetch the specific PR
+                let pr_url = format!(
+                    "https://api.github.com/repos/{}/{}/pulls/{}",
+                    owner, repo, number
+                );
+                
+                let pr = ureq::get(&pr_url)
+                    .set("User-Agent", "rubber")
+                    .call()?
+                    .into_json::<PullRequest>()?;
+                
+                // Display PR details and comments
+                display_pr_details(&pr, owner, repo)?;
+                display_pr_comments(number, owner, repo)?;
+                return Ok(());
+            }
+            Err(_) => {
+                eprintln!("Invalid PR number: {}", pr_number);
+                std::process::exit(1);
+            }
+        }
+    }
 
+    // Original interactive flow for listing PRs
     println!("Fetching the 10 most recent PRs for {}/{}", owner, repo);
 
     let url = format!(
