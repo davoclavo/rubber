@@ -65,21 +65,29 @@ impl OutputBuffer {
     }
 }
 
-fn get_comments_count(comments_url: &str) -> Result<usize, Box<dyn Error>> {
-    let response = ureq::get(comments_url)
-        .set("User-Agent", "rubber")
-        .call()?
-        .into_string()?;
+fn get_comments_count(comments_url: &str, github_token: Option<&str>) -> Result<usize, Box<dyn Error>> {
+    let mut request = ureq::get(comments_url)
+        .set("User-Agent", "rubber");
+    
+    if let Some(token) = github_token {
+        request = request.set("Authorization", &format!("Bearer {}", token));
+    }
+
+    let response = request.call()?.into_string()?;
 
     let comments: Vec<Value> = serde_json::from_str(&response)?;
     Ok(comments.len())
 }
 
-fn get_pr_comments(comments_url: &str) -> Result<Vec<Comment>, Box<dyn Error>> {
-    let response = ureq::get(comments_url)
-        .set("User-Agent", "rubber")
-        .call()?
-        .into_string()?;
+fn get_pr_comments(comments_url: &str, github_token: Option<&str>) -> Result<Vec<Comment>, Box<dyn Error>> {
+    let mut request = ureq::get(comments_url)
+        .set("User-Agent", "rubber");
+    
+    if let Some(token) = github_token {
+        request = request.set("Authorization", &format!("Bearer {}", token));
+    }
+
+    let response = request.call()?.into_string()?;
 
     let comments: Vec<Comment> = serde_json::from_str(&response)?;
     Ok(comments)
@@ -226,18 +234,19 @@ fn get_pr_details(
     pr_number: u32,
     owner: &str,
     repo: &str,
+    github_token: Option<&str>,
 ) -> Result<(PullRequestDetail, Vec<Comment>), Box<dyn Error>> {
-    // Fetch PR details and files in one call
     let pr_url = format!(
         "https://api.github.com/repos/{}/{}/pulls/{}",
         owner, repo, pr_number
     );
 
-    let pr_response = ureq::get(&pr_url)
-        .set("User-Agent", "rubber")
-        .call()?
-        .into_string()?;
+    let mut request = ureq::get(&pr_url).set("User-Agent", "rubber");
+    if let Some(token) = github_token {
+        request = request.set("Authorization", &format!("Bearer {}", token));
+    }
 
+    let pr_response = request.call()?.into_string()?;
     let mut details: PullRequestDetail = serde_json::from_str(&pr_response)?;
 
     // Fetch files
@@ -246,11 +255,12 @@ fn get_pr_details(
         owner, repo, pr_number
     );
 
-    let files_response = ureq::get(&files_url)
-        .set("User-Agent", "rubber")
-        .call()?
-        .into_string()?;
+    let mut files_request = ureq::get(&files_url).set("User-Agent", "rubber");
+    if let Some(token) = github_token {
+        files_request = files_request.set("Authorization", &format!("Bearer {}", token));
+    }
 
+    let files_response = files_request.call()?.into_string()?;
     details.files = serde_json::from_str(&files_response)?;
 
     // Fetch comments
@@ -259,7 +269,7 @@ fn get_pr_details(
         owner, repo, pr_number
     );
 
-    let comments = get_pr_comments(&comments_url)?;
+    let comments = get_pr_comments(&comments_url, github_token)?;
 
     Ok((details, comments))
 }
@@ -351,6 +361,8 @@ async fn run() -> Result<String, Box<dyn std::error::Error>> {
     // Initialize logger
     env_logger::init();
 
+    let github_token = env::var("GITHUB_TOKEN").ok();
+    
     let mut output = OutputBuffer::new();
     let args: Vec<String> = env::args().collect();
 
@@ -365,7 +377,7 @@ async fn run() -> Result<String, Box<dyn std::error::Error>> {
     // If PR number is provided, show its details directly
     if let Some(pr_number) = args.get(3) {
         match pr_number.parse::<u32>() {
-            Ok(number) => match get_pr_details(number, owner, repo) {
+            Ok(number) => match get_pr_details(number, owner, repo, github_token.as_deref()) {
                 Ok((details, comments)) => {
                     display_pr_details(&details, &comments, &mut output).await?;
                     return Ok(output.content);
@@ -392,10 +404,12 @@ async fn run() -> Result<String, Box<dyn std::error::Error>> {
         owner, repo
     );
 
-    let response = ureq::get(&url)
-        .set("User-Agent", "rubbery")
-        .call()?
-        .into_json::<Vec<PullRequest>>()?;
+    let mut request = ureq::get(&url).set("User-Agent", "rubbery");
+    if let Some(token) = &github_token {
+        request = request.set("Authorization", &format!("Bearer {}", token));
+    }
+
+    let response = request.call()?.into_json::<Vec<PullRequest>>()?;
 
     if response.is_empty() {
         output.add_line("No pull requests found.");
@@ -416,7 +430,7 @@ async fn run() -> Result<String, Box<dyn std::error::Error>> {
             };
 
             // Fetch comment count for this PR
-            let comments_count = match get_comments_count(&pr.comments_url) {
+            let comments_count = match get_comments_count(&pr.comments_url, github_token.as_deref()) {
                 Ok(count) => count.to_string(),
                 Err(_) => "Error".to_string(),
             };
@@ -453,7 +467,7 @@ async fn run() -> Result<String, Box<dyn std::error::Error>> {
             match input.parse::<u32>() {
                 Ok(pr_number) => {
                     if let Some(_pr) = find_pr_by_number(&response, pr_number) {
-                        match get_pr_details(pr_number, owner, repo) {
+                        match get_pr_details(pr_number, owner, repo, github_token.as_deref()) {
                             Ok((details, comments)) => {
                                 display_pr_details(&details, &comments, &mut output).await?;
                                 return Ok(output.content);
