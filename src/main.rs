@@ -1,4 +1,4 @@
-use log::{debug, error, info, warn};
+use log::{debug, error, warn};
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde::Deserialize;
 use serde::Serialize;
@@ -109,8 +109,12 @@ async fn get_code_review(patch: &str) -> Result<String, Box<dyn Error>> {
         env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY environment variable not set");
 
     let prompt = format!(
-        "Please review this code patch and provide specific, actionable feedback about potential issues, \
-        improvements, and best practices. Consider performance, security, maintainability, and Rust idioms.\n\n\
+        "Review this code patch and identify specific issues or needed improvements. Focus on:\n\
+        - Performance problems\n\
+        - Security concerns\n\
+        - Code maintainability\n\
+        - Rust best practices\n\
+        Only provide feedback if there are concrete issues to address.\n\n\
         ```\n{}\n```",
         patch
     );
@@ -164,57 +168,53 @@ async fn analyze_patch(patch: &str, output: &mut OutputBuffer) -> Result<(), Box
         deletions
     ));
 
-    // Add decorative border around patch analysis
-    output.add_separator('╔', 80);
-    output.add_line("║ Analysis:");
+    // Prepare to collect feedback
+    let mut feedback: Vec<String> = Vec::new();
 
-    // Look for common patterns that might need attention
+    // Collect all feedback items
     if patch.contains("TODO") || patch.contains("FIXME") {
-        output.add_line("║");
-        output.add_line("║ Questions to consider:");
-        output.add_line("║ - There are TODOs/FIXMEs in the code - should these be addressed before merging?");
+        feedback.push("Outstanding TODOs/FIXMEs should be addressed before merging".to_string());
     }
 
     if patch.contains("println!") || patch.contains("dbg!") {
-        output.add_line("║ - Debug print statements found - are these intended for production?");
+        feedback.push("Remove debug print statements before merging".to_string());
     }
 
-    // Look for potential improvements
-    let mut has_comments = false;
     if patch.contains("unwrap()") {
-        if !has_comments {
-            output.add_line("║");
-            output.add_line("║ Potential feedback:");
-            has_comments = true;
-        }
-        output.add_line("║ - Consider handling errors explicitly instead of using unwrap()");
+        feedback.push("Replace unwrap() calls with proper error handling".to_string());
     }
 
     if patch.contains("panic!") {
-        if !has_comments {
-            output.add_line("║");
-            output.add_line("║ Potential feedback:");
-        }
-        output.add_line("║ - Consider if panic! is appropriate here or if errors should be handled gracefully");
+        feedback.push(
+            "Consider replacing panic! with Result/Option for graceful error handling".to_string(),
+        );
     }
 
-    // Add Claude's review if available
-    match get_code_review(patch).await {
-        Ok(review) => {
-            output.add_line("║");
-            output.add_line("║ Claude's Review:");
-            output.add_line("║");
-            for line in review.lines() {
-                output.add_line(&format!("║ {}", line));
-            }
-        }
-        Err(e) => {
-            error!("Error getting code review: {}", e);
-        }
+    // Get Claude's review
+    if let Ok(review) = get_code_review(patch).await {
+        let review_feedback: Vec<String> = review
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| line.trim().to_string())
+            .collect();
+
+        feedback.extend(review_feedback);
     }
 
-    output.add_separator('╚', 80);
-    output.add_line("");
+    // Display feedback if any exists
+    if !feedback.is_empty() {
+        output.add_line("\nReview Suggestions:");
+        output.add_line(
+            "╭────────────────────────────────────────────────────────────────────────────────╮",
+        );
+        for suggestion in feedback {
+            output.add_line(&format!("│ {:<76} │", suggestion));
+        }
+        output.add_line(
+            "╰────────────────────────────────────────────────────────────────────────────────╯",
+        );
+        output.add_line("");
+    }
 
     Ok(())
 }
@@ -297,11 +297,11 @@ async fn display_pr_details(
 
                     if let Some(patch) = file.patch {
                         output.add_line(&format!("\nDiff for {}:", file.filename));
-                        output.add_separator('═', 80);
+                        output.add_line("╭────────────────────────────────────────────────────────────────────────────────╮");
                         for line in patch.lines() {
-                            output.add_line(&format!("│ {}", line));
+                            output.add_line(&format!("│ {:<78} │", line));
                         }
-                        output.add_separator('═', 80);
+                        output.add_line("╰────────────────────────────────────────────────────────────────────────────────╯");
                         output.add_line("\nAnalysis:");
                         analyze_patch(&patch, output).await?;
                     }
@@ -332,13 +332,15 @@ fn display_pr_comments(
 
     let comments = get_pr_comments(&comments_url)?;
 
+    output.add_separator('-', 80);
+    output.add_separator('-', 80);
     output.add_line(&format!("\nComments for PR #{}:", pr_number));
 
     if comments.is_empty() {
         output.add_line("No comments found for this PR.");
     } else {
         for comment in comments {
-            output.add_separator('┌', 80);
+            output.add_separator('-', 80);
             output.add_line(&format!(
                 "│ Author: {} (at {})",
                 comment.user.login, comment.created_at
@@ -347,7 +349,7 @@ fn display_pr_comments(
             for line in comment.body.lines() {
                 output.add_line(&format!("│ {}", line));
             }
-            output.add_separator('└', 80);
+            output.add_separator('-', 80);
             output.add_line("");
         }
     }
