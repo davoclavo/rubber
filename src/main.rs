@@ -164,49 +164,57 @@ async fn analyze_patch(patch: &str, output: &mut OutputBuffer) -> Result<(), Box
         deletions
     ));
 
+    // Add decorative border around patch analysis
+    output.add_separator('╔', 80);
+    output.add_line("║ Analysis:");
+
     // Look for common patterns that might need attention
     if patch.contains("TODO") || patch.contains("FIXME") {
-        output.add_line("\nQuestions to consider:");
-        output.add_line(
-            "- There are TODOs/FIXMEs in the code - should these be addressed before merging?",
-        );
+        output.add_line("║");
+        output.add_line("║ Questions to consider:");
+        output.add_line("║ - There are TODOs/FIXMEs in the code - should these be addressed before merging?");
     }
 
     if patch.contains("println!") || patch.contains("dbg!") {
-        output.add_line("- Debug print statements found - are these intended for production?");
+        output.add_line("║ - Debug print statements found - are these intended for production?");
     }
 
     // Look for potential improvements
     let mut has_comments = false;
     if patch.contains("unwrap()") {
         if !has_comments {
-            output.add_line("\nPotential feedback:");
+            output.add_line("║");
+            output.add_line("║ Potential feedback:");
             has_comments = true;
         }
-        output.add_line("- Consider handling errors explicitly instead of using unwrap()");
+        output.add_line("║ - Consider handling errors explicitly instead of using unwrap()");
     }
 
     if patch.contains("panic!") {
         if !has_comments {
-            output.add_line("\nPotential feedback:");
+            output.add_line("║");
+            output.add_line("║ Potential feedback:");
         }
-        output.add_line(
-            "- Consider if panic! is appropriate here or if errors should be handled gracefully",
-        );
+        output.add_line("║ - Consider if panic! is appropriate here or if errors should be handled gracefully");
     }
 
     // Add Claude's review if available
     match get_code_review(patch).await {
         Ok(review) => {
-            output.add_line("\nClaude's Review:");
-            output.add_separator('-', 80);
-            output.add_line(&review);
-            output.add_separator('-', 80);
+            output.add_line("║");
+            output.add_line("║ Claude's Review:");
+            output.add_line("║");
+            for line in review.lines() {
+                output.add_line(&format!("║ {}", line));
+            }
         }
         Err(e) => {
             error!("Error getting code review: {}", e);
         }
     }
+
+    output.add_separator('╚', 80);
+    output.add_line("");
 
     Ok(())
 }
@@ -289,8 +297,11 @@ async fn display_pr_details(
 
                     if let Some(patch) = file.patch {
                         output.add_line(&format!("\nDiff for {}:", file.filename));
-                        output.add_separator('-', 80);
-                        output.add_line(format!("{}", patch));
+                        output.add_separator('═', 80);
+                        for line in patch.lines() {
+                            output.add_line(&format!("│ {}", line));
+                        }
+                        output.add_separator('═', 80);
                         output.add_line("\nAnalysis:");
                         analyze_patch(&patch, output).await?;
                     }
@@ -326,15 +337,17 @@ fn display_pr_comments(
     if comments.is_empty() {
         output.add_line("No comments found for this PR.");
     } else {
-        output.add_separator('-', 80);
         for comment in comments {
+            output.add_separator('┌', 80);
             output.add_line(&format!(
-                "Author: {} (at {})",
+                "│ Author: {} (at {})",
                 comment.user.login, comment.created_at
             ));
             output.add_separator('-', 80);
-            output.add_line(&comment.body);
-            output.add_separator('-', 80);
+            for line in comment.body.lines() {
+                output.add_line(&format!("│ {}", line));
+            }
+            output.add_separator('└', 80);
             output.add_line("");
         }
     }

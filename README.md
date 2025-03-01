@@ -70,6 +70,7 @@ RUST_LOG=debug rubber microsoft typescript 12345
   - Debug statements (println!, dbg!)
   - Unwrap usage
   - Panic statements
+  - Avoid magic constants
 - AI-powered code review feedback
 - Comment history tracking
 
