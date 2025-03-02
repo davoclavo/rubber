@@ -1,4 +1,4 @@
-# 🤖 Rubber - Your AI-Powered PR Review Buddy
+# 🦆 Rubber - Your AI-Powered PR Review Buddy
 
 Rubber is a command-line tool that helps you review GitHub Pull Requests by providing automated analysis and AI-powered code review feedback. Think of it as having a helpful pair programming buddy available 24/7.
 

@@ -170,14 +170,18 @@ async fn get_code_review(patch: &str) -> Result<String, Box<dyn Error>> {
         env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY environment variable not set");
 
     let prompt = format!(
-        "Review this code patch and identify specific issues or needed improvements. Focus on:\n\
-        - Performance problems\n\
-        - Security concerns\n\
-        - Code maintainability\n\
-        - Rust best practices\n\
+        "Review this code patch and provide:\n\
+        1. A brief summary of the changes (2-3 sentences)\n\
+        2. Specific issues or needed improvements, focusing on:\n\
+           - Performance problems\n\
+           - Security concerns\n\
+           - Code maintainability\n\
+           - Rust best practices\n\
         \n\
-        Provide feedback in a markdown list format.
-        Only provide feedback if there are concrete issues to address.\n\n\
+        Format the response with a '## Summary' section followed by a '## Feedback' section with a markdown list.\n\
+        Only provide feedback if there are concrete issues to address.\n\
+        If the patch lacks sufficient context to make meaningful suggestions, indicate which additional files or \
+        information would be helpful to review in a '## Additional Context Needed' section.\n\n\
         ```\n{}\n```",
         patch
     );
@@ -229,6 +233,25 @@ async fn analyze_patch(patch: &str, output: &mut OutputBuffer) -> Result<(), Box
         additions,
         deletions
     ));
+
+    // Get Claude's review
+    if let Ok(review) = get_code_review(patch).await {
+        // Split the review into sections
+        let sections: Vec<&str> = review.split("## ").collect();
+
+        for section in sections {
+            if section.starts_with("Summary") {
+                output.add_section("Change Summary");
+                output.add_box_content(section.replace("Summary\n", "").trim());
+            } else if section.starts_with("Feedback") {
+                output.add_section("AI Suggestions");
+                output.add_box_content(section.replace("Feedback\n", "").trim());
+            } else if section.starts_with("Additional Context Needed") {
+                output.add_section("Additional Context Needed");
+                output.add_box_content(section.replace("Additional Context Needed\n", "").trim());
+            }
+        }
+    }
 
     // Prepare to collect feedback
     let mut feedback: Vec<String> = Vec::new();
@@ -297,17 +320,6 @@ async fn analyze_patch(patch: &str, output: &mut OutputBuffer) -> Result<(), Box
     let has_test = patch.contains("#[test]");
     if has_new_fn && !has_test {
         feedback.push("New functions added without corresponding tests".to_string());
-    }
-
-    // Get Claude's review
-    if let Ok(review) = get_code_review(patch).await {
-        let review_feedback: Vec<String> = review
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .map(|line| line.to_string())
-            .collect();
-
-        feedback.extend(review_feedback);
     }
 
     // Display feedback if any exists
