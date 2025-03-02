@@ -152,3 +152,41 @@ Contributions are welcome! Feel free to:
 - Check out our contributing guidelines
 
 Remember: Rubber is meant to *assist* human reviewers, not replace them. Always verify AI suggestions and use your judgment!
+
+## Features
+
+### Linus Torvalds Mode
+
+Want to get feedback on your PR in the style of Linux's creator? Use the `--linus-torvalds` flag to receive 
+code review feedback in the characteristically passionate and direct style of Linus Torvalds.
+
+```bash
+rubber owner repo PR_number --linus-torvalds
+```
+
+This mode will:
+- Provide brutally honest feedback about code quality
+- Point out potential issues with extra... enthusiasm
+- Channel Linus's famous attention to performance and maintainability
+- Keep technical accuracy while adding some colorful commentary
+
+Example output:
+```
+┣━━ Linus Says ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+┃
+┃  Jesus Christ, people! Who taught you to handle errors like this? Your 
+┃  unwrap() calls are scattered around like a drunk monkey was throwing 
+┃  bananas at the keyboard! Have you never heard of proper error handling?
+┃  
+┃  And don't even get me started on those magic numbers. They make me want to 
+┃  pull my hair out and go live in a cave where I never have to see code again.
+┃  
+┃  Look, it's not rocket science:
+┃  1. USE PROPER ERROR TYPES
+┃  2. DOCUMENT YOUR CONSTANTS
+┃  3. STOP BEING LAZY WITH MEMORY MANAGEMENT
+┃
+```
+
+Note: While entertaining, this mode still provides technically valid code review feedback, just with 
+extra... personality.
