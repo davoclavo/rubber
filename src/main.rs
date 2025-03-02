@@ -66,11 +66,13 @@ impl OutputBuffer {
 
     fn add_header(&mut self, text: &str) {
         self.add_line("");
-        self.add_line(&format!("┏━━ {} {}", text, "━".repeat(76 - text.len())));
+        let padding = 76_usize.saturating_sub(text.len());
+        self.add_line(&format!("┏━━ {} {}", text, "━".repeat(padding)));
     }
 
     fn add_section(&mut self, text: &str) {
-        self.add_line(&format!("┣━━ {} {}", text, "━".repeat(76 - text.len())));
+        let padding = 76_usize.saturating_sub(text.len());
+        self.add_line(&format!("┣━━ {} {}", text, "━".repeat(padding)));
     }
 
     fn add_box_content(&mut self, content: &str) {
@@ -87,11 +89,8 @@ impl OutputBuffer {
 
     fn add_diff_header(&mut self, filename: &str) {
         self.add_line("");
-        self.add_line(&format!(
-            "┏━━ Diff: {} {}",
-            filename,
-            "━".repeat(70 - filename.len())
-        ));
+        let padding = 70_usize.saturating_sub(filename.len());
+        self.add_line(&format!("┏━━ Diff: {} {}", filename, "━".repeat(padding)));
     }
 
     fn add_diff_content(&mut self, content: &str) {
