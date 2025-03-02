@@ -1,8 +1,8 @@
-# 🦆 Rubber - Your AI-Powered PR Review Buddy
+# 🦆 Rubber - less stuck, more quack
 
-Rubber is a command-line tool that helps you review GitHub Pull Requests by providing automated analysis and AI-powered code review feedback. Think of it as having a helpful pair programming buddy available 24/7.
+Rubber is a command-line tool that helps you review GitHub Pull Requests by providing automated analysis and code review feedback. Think of it as having a helpful pair programming buddy available 24/7.
 
-## 🚀 Features
+## Features
 
 - View recent PRs in a repository
 - Detailed PR analysis including:
@@ -13,18 +13,19 @@ Rubber is a command-line tool that helps you review GitHub Pull Requests by prov
 - Interactive PR exploration
 - Comment history viewing
 
-## 📋 Requirements
+## Requirements
 
 - Rust installed on your system
 - An Anthropic API key for AI-powered reviews
 - GitHub access to the repositories you want to review
 
-## ⚙️ Setup
+##  Setup
 
 1. Clone the repository
 2. Set your Anthropic API key:
    ```bash
-   export ANTHROPIC_API_KEY='your-key-here'
+   export ANTHROPIC_API_KEY='your-anthropic-key-here'
+   export GITHUB_TOKEN='your-github-key-here'
    ```
 3. Configure logging level (optional):
    ```bash
@@ -35,34 +36,34 @@ Rubber is a command-line tool that helps you review GitHub Pull Requests by prov
    cargo build --release
    ```
 
-## 🎮 Usage
+## Usage
 
 ### Basic Usage
 
 ```bash
-rubber <owner> <repo> [pr_number]
+cargo run <owner> <repo> [pr_number]
 ```
 
 ### Environment Variables
 
 - `ANTHROPIC_API_KEY`: Your Anthropic API key for AI-powered reviews
+- `GITHUB_TOKEN`: Your Github API key
 - `RUST_LOG`: Logging level configuration (default: info)
   - Available levels: error, warn, info, debug, trace
-  - Example: `RUST_LOG=debug` for verbose logging
 
 ### Examples
 
 List recent PRs:
 ```bash
-rubber microsoft typescript
+cargo run davoclavo rubber
 ```
 
 Review specific PR with debug logging:
 ```bash
-RUST_LOG=debug rubber microsoft typescript 12345
+RUST_LOG=debug cargo run davoclavo rubber 2
 ```
 
-## 🔍 Current Analysis Features
+## Current Analysis Features
 
 - Line change statistics
 - Detection of common code patterns:
@@ -74,7 +75,7 @@ RUST_LOG=debug rubber microsoft typescript 12345
 - AI-powered code review feedback
 - Comment history tracking
 
-## 🎯 Future Roadmap
+## Future Roadmap
 
 ### Enhanced Code Analysis
 
@@ -130,22 +131,23 @@ RUST_LOG=debug rubber microsoft typescript 12345
   - Common issue tracking
   - Review time analytics
 
-## 🤝 Contributing
+## Contributing
 
 Contributions are welcome! Feel free to:
 
 1. Fork the repository
 2. Create a feature branch
 3. Submit a Pull Request
+4. Get reviewed by Rubber
 
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - Powered by Anthropic's Claude for AI code review
 - Built with Rust 🦀
 - Inspired by the rubber duck debugging method
 
-## 📞 Support
+## Support
 
 - Create an issue for bug reports
 - Start a discussion for feature requests
@@ -169,24 +171,6 @@ This mode will:
 - Point out potential issues with extra... enthusiasm
 - Channel Linus's famous attention to performance and maintainability
 - Keep technical accuracy while adding some colorful commentary
-
-Example output:
-```
-┣━━ Linus Says ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-┃
-┃  Jesus Christ, people! Who taught you to handle errors like this? Your 
-┃  unwrap() calls are scattered around like a drunk monkey was throwing 
-┃  bananas at the keyboard! Have you never heard of proper error handling?
-┃  
-┃  And don't even get me started on those magic numbers. They make me want to 
-┃  pull my hair out and go live in a cave where I never have to see code again.
-┃  
-┃  Look, it's not rocket science:
-┃  1. USE PROPER ERROR TYPES
-┃  2. DOCUMENT YOUR CONSTANTS
-┃  3. STOP BEING LAZY WITH MEMORY MANAGEMENT
-┃
-```
 
 Note: While entertaining, this mode still provides technically valid code review feedback, just with 
 extra... personality.
