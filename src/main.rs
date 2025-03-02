@@ -1,4 +1,4 @@
-use log::{error, trace, warn};
+use log::{error, info, trace, warn};
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde::Deserialize;
 use serde::Serialize;
@@ -166,6 +166,8 @@ struct FileChange {
 }
 
 async fn get_code_review(patch: &str) -> Result<String, Box<dyn Error>> {
+    info!("Generating AI review for patch...");
+
     let api_key =
         env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY environment variable not set");
 
@@ -351,6 +353,8 @@ fn get_pr_details(
     repo: &str,
     github_token: Option<&str>,
 ) -> Result<(PullRequestDetail, Vec<Comment>), Box<dyn Error>> {
+    info!("Downloading PR #{} details...", pr_number);
+
     let url = format!(
         "https://api.github.com/repos/{}/{}/pulls/{}",
         owner, repo, pr_number
@@ -365,6 +369,8 @@ fn get_pr_details(
     let mut details: PullRequestDetail = serde_json::from_str(&response)?;
 
     // Fetch files data from a different endpoint
+    info!("Downloading PR file changes...");
+
     let files_url = format!(
         "https://api.github.com/repos/{}/{}/pulls/{}/files",
         owner, repo, pr_number
@@ -380,6 +386,7 @@ fn get_pr_details(
     details.files = files;
 
     // Get comments
+    info!("Downloading PR comments...");
     let comments = get_pr_comments(&details.comments_url, github_token)?;
 
     Ok((details, comments))
@@ -436,6 +443,9 @@ async fn display_pr_details(
 
                 output.add_diff_header(&file.filename);
                 output.add_diff_content(patch);
+
+                // Add info message before analysis
+                info!("Analyzing changes in {}...", file.filename);
 
                 // Analysis section for this file
                 output.add_section("Static Analysis");
@@ -507,6 +517,14 @@ async fn run() -> Result<String, Box<dyn std::error::Error>> {
     let owner = &args[1];
     let repo = &args[2];
 
+    // Before fetching PR list
+    info!("Fetching recent PRs for {}/{}...", owner, repo);
+
+    let url = format!(
+        "https://api.github.com/repos/{}/{}/pulls?state=all&sort=created&direction=desc&per_page=10",
+        owner, repo
+    );
+
     // If PR number is provided, show its details directly
     if let Some(pr_number) = args.get(3) {
         match pr_number.parse::<u32>() {
@@ -531,11 +549,6 @@ async fn run() -> Result<String, Box<dyn std::error::Error>> {
         "Fetching the 10 most recent PRs for {}/{}",
         owner, repo
     ));
-
-    let url = format!(
-        "https://api.github.com/repos/{}/{}/pulls?state=all&sort=created&direction=desc&per_page=10",
-        owner, repo
-    );
 
     let mut request = ureq::get(&url).set("User-Agent", "rubbery");
     if let Some(token) = &github_token {
