@@ -1,4 +1,4 @@
-use log::{debug, error, warn};
+use log::{error, trace, warn};
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde::Deserialize;
 use serde::Serialize;
@@ -75,10 +75,14 @@ impl OutputBuffer {
 
     fn add_box_content(&mut self, content: &str) {
         self.add_line("┃");
+        self.add_box_inner_content(content);
+        self.add_line("┃");
+    }
+
+    fn add_box_inner_content(&mut self, content: &str) {
         for line in content.lines() {
             self.add_line(&format!("┃  {}", line));
         }
-        self.add_line("┃");
     }
 
     fn add_diff_header(&mut self, filename: &str) {
@@ -102,7 +106,9 @@ impl OutputBuffer {
     }
 
     fn add_diff_separator(&mut self) {
-        self.add_line("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        self.add_line(
+            "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        );
     }
 }
 
@@ -170,6 +176,8 @@ async fn get_code_review(patch: &str) -> Result<String, Box<dyn Error>> {
         - Security concerns\n\
         - Code maintainability\n\
         - Rust best practices\n\
+        \n\
+        Provide feedback in a markdown list format.
         Only provide feedback if there are concrete issues to address.\n\n\
         ```\n{}\n```",
         patch
@@ -201,8 +209,8 @@ async fn get_code_review(patch: &str) -> Result<String, Box<dyn Error>> {
         .json::<serde_json::Value>()
         .await?;
 
-    debug!("Request: {:?}", request);
-    debug!("Response: {:?}", response);
+    trace!("Request: {:?}", request);
+    trace!("Response: {:?}", response);
 
     let review = response["content"][0]["text"]
         .as_str()
@@ -245,12 +253,15 @@ async fn analyze_patch(patch: &str, output: &mut OutputBuffer) -> Result<(), Box
     }
 
     if patch.contains("panic!") {
-        feedback.push("Consider replacing panic! with Result/Option for graceful error handling".to_string());
+        feedback.push(
+            "Consider replacing panic! with Result/Option for graceful error handling".to_string(),
+        );
     }
 
     // Memory and performance patterns
     if patch.contains("Clone") || patch.contains("clone()") {
-        feedback.push("Review clone() usage - consider using references where possible".to_string());
+        feedback
+            .push("Review clone() usage - consider using references where possible".to_string());
     }
 
     if patch.contains("Box::new") {
@@ -272,7 +283,8 @@ async fn analyze_patch(patch: &str, output: &mut OutputBuffer) -> Result<(), Box
 
     // Security considerations
     if patch.contains("unsafe") {
-        feedback.push("Unsafe block detected - ensure safety guarantees are documented".to_string());
+        feedback
+            .push("Unsafe block detected - ensure safety guarantees are documented".to_string());
     }
 
     if patch.contains("as_ptr") || patch.contains("as_mut_ptr") {
@@ -280,7 +292,9 @@ async fn analyze_patch(patch: &str, output: &mut OutputBuffer) -> Result<(), Box
     }
 
     // Testing patterns
-    let has_new_fn = patch.lines().any(|l| l.contains("fn ") && !l.contains("test"));
+    let has_new_fn = patch
+        .lines()
+        .any(|l| l.contains("fn ") && !l.contains("test"));
     let has_test = patch.contains("#[test]");
     if has_new_fn && !has_test {
         feedback.push("New functions added without corresponding tests".to_string());
@@ -291,7 +305,7 @@ async fn analyze_patch(patch: &str, output: &mut OutputBuffer) -> Result<(), Box
         let review_feedback: Vec<String> = review
             .lines()
             .filter(|line| !line.trim().is_empty())
-            .map(|line| line.trim().to_string())
+            .map(|line| line.to_string())
             .collect();
 
         feedback.extend(review_feedback);
@@ -300,9 +314,7 @@ async fn analyze_patch(patch: &str, output: &mut OutputBuffer) -> Result<(), Box
     // Display feedback if any exists
     if !feedback.is_empty() {
         output.add_section("AI Suggestions");
-        for suggestion in feedback {
-            output.add_box_content(&suggestion);
-        }
+        output.add_box_content(&feedback.join("\n"));
     }
 
     Ok(())
@@ -401,7 +413,10 @@ async fn display_pr_details(
                 "┃  {:<50} {:<10} {:<10} {:<10}",
                 file.filename, file.status, file.additions, file.deletions
             ));
+        }
+        output.add_diff_separator();
 
+        for file in &details.files {
             if let Some(patch) = &file.patch {
                 if !first {
                     output.add_diff_separator();
@@ -417,7 +432,6 @@ async fn display_pr_details(
             }
         }
     }
-
 
     output.add_diff_separator();
     output.add_line("");
