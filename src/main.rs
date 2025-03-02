@@ -6,6 +6,24 @@ use serde_json::Value;
 use std::env;
 use std::error::Error;
 use std::io::{self, BufRead, Write};
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Repository owner
+    owner: String,
+
+    /// Repository name
+    repo: String,
+
+    /// Optional PR number
+    pr_number: Option<u32>,
+
+    /// Get feedback in Linus Torvalds style
+    #[arg(long)]
+    linus_torvalds: bool,
+}
 
 #[derive(Deserialize, Debug)]
 struct PullRequest {
@@ -158,28 +176,47 @@ struct FileChange {
     patch: Option<String>,
 }
 
-async fn get_code_review(patch: &str) -> Result<String, Box<dyn Error>> {
+async fn get_code_review(patch: &str, linus_mode: bool) -> Result<String, Box<dyn Error>> {
     info!("Generating AI review for patch...");
 
     let api_key =
         env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY environment variable not set");
 
-    let prompt = format!(
-        "Review this code patch and provide:\n\
-        1. A brief summary of the changes (2-3 sentences)\n\
-        2. Specific issues or needed improvements, focusing on:\n\
-           - Performance problems\n\
-           - Security concerns\n\
-           - Code maintainability\n\
-           - Rust best practices\n\
-        \n\
-        Format the response with a '## Summary' section followed by a '## Feedback' section with a markdown list.\n\
-        Only provide feedback if there are concrete issues to address.\n\
-        If the patch lacks sufficient context to make meaningful suggestions, indicate which additional files or \
-        information would be helpful to review in a '## Additional Context Needed' section.\n\n\
-        ```\n{}\n```",
-        patch
-    );
+    let prompt = if linus_mode {
+        format!(
+            "Review this code patch in the style of Linus Torvalds - be brutally honest, sarcastic, and passionate \
+            about code quality, but make technically valid points. Channel his famous rants about poor code quality. \
+            Provide:\n\
+            1. A brief, passionate summary of the changes\n\
+            2. A classic Linus-style rant about any issues, focusing on:\n\
+               - Performance problems\n\
+               - Security concerns\n\
+               - Code maintainability\n\
+               - Rust best practices\n\
+            \n\
+            Format the response with a '## Summary' section followed by a '## Linus Rant' section.\n\
+            Stay in character as Linus throughout. If there are no major issues, express pleasant surprise.\n\
+            ```\n{}\n```",
+            patch
+        )
+    } else {
+        format!(
+            "Review this code patch and provide:\n\
+            1. A brief summary of the changes (2-3 sentences)\n\
+            2. Specific issues or needed improvements, focusing on:\n\
+               - Performance problems\n\
+               - Security concerns\n\
+               - Code maintainability\n\
+               - Rust best practices\n\
+            \n\
+            Format the response with a '## Summary' section followed by a '## Feedback' section with a markdown list.\n\
+            Only provide feedback if there are concrete issues to address.\n\
+            If the patch lacks sufficient context to make meaningful suggestions, indicate which additional files or \
+            information would be helpful to review in a '## Additional Context Needed' section.\n\n\
+            ```\n{}\n```",
+            patch
+        )
+    };
 
     let client = reqwest::Client::new();
     let mut headers = HeaderMap::new();
@@ -218,7 +255,7 @@ async fn get_code_review(patch: &str) -> Result<String, Box<dyn Error>> {
     Ok(review)
 }
 
-async fn analyze_patch(patch: &str, output: &mut OutputBuffer) -> Result<(), Box<dyn Error>> {
+async fn analyze_patch(patch: &str, output: &mut OutputBuffer, linus_mode: bool) -> Result<(), Box<dyn Error>> {
     let additions = patch.lines().filter(|l| l.starts_with('+')).count();
     let deletions = patch.lines().filter(|l| l.starts_with('-')).count();
 
@@ -230,7 +267,7 @@ async fn analyze_patch(patch: &str, output: &mut OutputBuffer) -> Result<(), Box
     ));
 
     // Get Claude's review
-    if let Ok(review) = get_code_review(patch).await {
+    if let Ok(review) = get_code_review(patch, linus_mode).await {
         // Split the review into sections
         let sections: Vec<&str> = review.split("## ").collect();
 
@@ -238,9 +275,9 @@ async fn analyze_patch(patch: &str, output: &mut OutputBuffer) -> Result<(), Box
             if section.starts_with("Summary") {
                 output.add_section("Change Summary");
                 output.add_box_content(section.replace("Summary\n", "").trim());
-            } else if section.starts_with("Feedback") {
-                output.add_section("AI Suggestions");
-                output.add_box_content(section.replace("Feedback\n", "").trim());
+            } else if section.starts_with("Feedback") || section.starts_with("Linus Rant") {
+                output.add_section(if linus_mode { "Linus Says" } else { "AI Suggestions" });
+                output.add_box_content(section.replace("Feedback\n", "").replace("Linus Rant\n", "").trim());
             } else if section.starts_with("Additional Context Needed") {
                 output.add_section("Additional Context Needed");
                 output.add_box_content(section.replace("Additional Context Needed\n", "").trim());
@@ -389,6 +426,7 @@ async fn display_pr_details(
     details: &PullRequestDetail,
     comments: &[Comment],
     output: &mut OutputBuffer,
+    linus_mode: bool,
 ) -> Result<(), Box<dyn Error>> {
     // Title header
     output.add_header(&details.title);
@@ -442,7 +480,7 @@ async fn display_pr_details(
 
                 // Analysis section for this file
                 output.add_section("Static Analysis");
-                analyze_patch(patch, output).await?;
+                analyze_patch(patch, output, linus_mode).await?;
             }
         }
     }
@@ -480,50 +518,32 @@ async fn run() -> Result<String, Box<dyn std::error::Error>> {
     env_logger::init();
 
     let github_token = env::var("GITHUB_TOKEN").ok();
-
+    let args = Args::parse();
     let mut output = OutputBuffer::new();
-    let args: Vec<String> = env::args().collect();
-
-    if args.len() < 3 {
-        error!("Usage: {} <owner> <repo> [pr_number]", args[0]);
-        std::process::exit(1);
-    }
-
-    let owner = &args[1];
-    let repo = &args[2];
-
-    // Before fetching PR list
-    info!("Fetching recent PRs for {}/{}...", owner, repo);
-
-    let url = format!(
-        "https://api.github.com/repos/{}/{}/pulls?state=all&sort=created&direction=desc&per_page=10",
-        owner, repo
-    );
 
     // If PR number is provided, show its details directly
-    if let Some(pr_number) = args.get(3) {
-        match pr_number.parse::<u32>() {
-            Ok(number) => match get_pr_details(number, owner, repo, github_token.as_deref()) {
-                Ok((details, comments)) => {
-                    display_pr_details(&details, &comments, &mut output).await?;
-                    return Ok(output.content);
-                }
-                Err(e) => {
-                    error!("Error fetching PR details: {}", e);
-                    return Ok("Error fetching PR details.".to_string());
-                }
-            },
-            Err(_) => {
-                error!("Invalid PR number: {}", pr_number);
-                return Ok(format!("Invalid PR number: {}", pr_number));
+    if let Some(number) = args.pr_number {
+        match get_pr_details(number, &args.owner, &args.repo, github_token.as_deref()) {
+            Ok((details, comments)) => {
+                display_pr_details(&details, &comments, &mut output, args.linus_torvalds).await?;
+                return Ok(output.content);
+            }
+            Err(e) => {
+                error!("Error fetching PR details: {}", e);
+                return Ok("Error fetching PR details.".to_string());
             }
         }
     }
 
     output.add_line(format!(
         "Fetching the 10 most recent PRs for {}/{}",
-        owner, repo
+        args.owner, args.repo
     ));
+
+    let url = format!(
+        "https://api.github.com/repos/{}/{}/pulls?state=all&sort=created&direction=desc&per_page=10",
+        args.owner, args.repo
+    );
 
     let mut request = ureq::get(&url).set("User-Agent", "rubbery");
     if let Some(token) = &github_token {
@@ -589,9 +609,9 @@ async fn run() -> Result<String, Box<dyn std::error::Error>> {
             match input.parse::<u32>() {
                 Ok(pr_number) => {
                     if let Some(_pr) = find_pr_by_number(&response, pr_number) {
-                        match get_pr_details(pr_number, owner, repo, github_token.as_deref()) {
+                        match get_pr_details(pr_number, &args.owner, &args.repo, github_token.as_deref()) {
                             Ok((details, comments)) => {
-                                display_pr_details(&details, &comments, &mut output).await?;
+                                display_pr_details(&details, &comments, &mut output, args.linus_torvalds).await?;
                                 return Ok(output.content);
                             }
                             Err(e) => {
