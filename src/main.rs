@@ -467,6 +467,20 @@ async fn display_pr_details(
 
         for file in &details.files {
             if let Some(patch) = &file.patch {
+                // Skip analysis for Cargo.lock files
+                if file.filename == "Cargo.lock" {
+                    if !first {
+                        output.add_diff_separator();
+                    }
+                    first = false;
+
+                    output.add_diff_header(&file.filename);
+                    output.add_diff_content(patch);
+                    output.add_section("Note");
+                    output.add_box_content("Skipping analysis for Cargo.lock file");
+                    continue;
+                }
+
                 if !first {
                     output.add_diff_separator();
                 }
