@@ -11,12 +11,10 @@ use std::io::{self, BufRead, Write};
 struct PullRequest {
     number: u32,
     title: String,
-    body: Option<String>,
     user: User,
     created_at: String,
     html_url: String,
     comments_url: String,
-    url: String,
 }
 
 #[derive(Deserialize, Debug)]
@@ -26,7 +24,6 @@ struct User {
 
 #[derive(Deserialize, Debug)]
 struct Comment {
-    id: u64,
     user: User,
     created_at: String,
     body: String,
@@ -61,18 +58,18 @@ impl OutputBuffer {
     }
 
     fn add_separator(&mut self, ch: char, count: usize) {
-        self.add_line(&ch.to_string().repeat(count));
+        self.add_line(ch.to_string().repeat(count));
     }
 
     fn add_header(&mut self, text: &str) {
         self.add_line("");
         let padding = 76_usize.saturating_sub(text.len());
-        self.add_line(&format!("┏━━ {} {}", text, "━".repeat(padding)));
+        self.add_line(format!("┏━━ {} {}", text, "━".repeat(padding)));
     }
 
     fn add_section(&mut self, text: &str) {
         let padding = 76_usize.saturating_sub(text.len());
-        self.add_line(&format!("┣━━ {} {}", text, "━".repeat(padding)));
+        self.add_line(format!("┣━━ {} {}", text, "━".repeat(padding)));
     }
 
     fn add_box_content(&mut self, content: &str) {
@@ -83,14 +80,14 @@ impl OutputBuffer {
 
     fn add_box_inner_content(&mut self, content: &str) {
         for line in content.lines() {
-            self.add_line(&format!("┃  {}", line));
+            self.add_line(format!("┃  {}", line));
         }
     }
 
     fn add_diff_header(&mut self, filename: &str) {
         self.add_line("");
         let padding = 70_usize.saturating_sub(filename.len());
-        self.add_line(&format!("┏━━ Diff: {} {}", filename, "━".repeat(padding)));
+        self.add_line(format!("┏━━ Diff: {} {}", filename, "━".repeat(padding)));
     }
 
     fn add_diff_content(&mut self, content: &str) {
@@ -147,21 +144,17 @@ fn get_pr_comments(
 struct PullRequestDetail {
     title: String,
     body: Option<String>,
-    html_url: String,
-    user: User,
-    created_at: String,
     comments_url: String,
     #[serde(default)]
     files: Vec<FileChange>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Default)]
 struct FileChange {
     filename: String,
     status: String,
     additions: u32,
     deletions: u32,
-    changes: u32,
     patch: Option<String>,
 }
 
@@ -419,15 +412,15 @@ async fn display_pr_details(
         output.add_box_content("No files modified in this PR.");
     } else {
         // File summary table
-        output.add_line(&format!(
+        output.add_line(format!(
             "┃  {:<50} {:<10} {:<10} {:<10}",
             "Filename", "Status", "Additions", "Deletions"
         ));
-        output.add_line(&format!("┃  {}", "─".repeat(80)));
+        output.add_line(format!("┃  {}", "─".repeat(80)));
 
         let mut first = true;
         for file in &details.files {
-            output.add_line(&format!(
+            output.add_line(format!(
                 "┃  {:<50} {:<10} {:<10} {:<10}",
                 file.filename, file.status, file.additions, file.deletions
             ));
@@ -471,29 +464,11 @@ fn find_pr_by_number(prs: &[PullRequest], number: u32) -> Option<&PullRequest> {
     prs.iter().find(|pr| pr.number == number)
 }
 
-impl Default for FileChange {
-    fn default() -> Self {
-        Self {
-            filename: String::new(),
-            status: String::new(),
-            additions: 0,
-            deletions: 0,
-            changes: 0,
-            patch: None,
-        }
-    }
-}
-
 impl Default for PullRequestDetail {
     fn default() -> Self {
         Self {
             title: String::new(),
             body: None,
-            html_url: String::new(),
-            user: User {
-                login: String::new(),
-            },
-            created_at: String::new(),
             comments_url: String::new(),
             files: Vec::new(),
         }
@@ -545,7 +520,7 @@ async fn run() -> Result<String, Box<dyn std::error::Error>> {
         }
     }
 
-    output.add_line(&format!(
+    output.add_line(format!(
         "Fetching the 10 most recent PRs for {}/{}",
         owner, repo
     ));
@@ -561,11 +536,11 @@ async fn run() -> Result<String, Box<dyn std::error::Error>> {
         output.add_line("No pull requests found.");
         return Ok(output.content);
     } else {
-        output.add_line(&format!(
+        output.add_line(format!(
             "{:<6} {:<50} {:<20} {:<15} {:<15}",
             "PR#", "Title", "Author", "Created At", "Comments"
         ));
-        output.add_line(&"-".repeat(106));
+        output.add_line("-".repeat(106));
 
         for pr in &response {
             // Truncate title if too long
@@ -582,13 +557,13 @@ async fn run() -> Result<String, Box<dyn std::error::Error>> {
                 Err(_) => "Error".to_string(),
             };
 
-            output.add_line(&format!(
+            output.add_line(format!(
                 "{:<6} {:<50} {:<20} {:<15} {:<15}",
                 pr.number, title, pr.user.login, pr.created_at, comments_count
             ));
 
             // Print the PR URL on a separate line
-            output.add_line(&format!("       URL: {}", pr.html_url));
+            output.add_line(format!("       URL: {}", pr.html_url));
         }
 
         // Print the accumulated output before asking for input
